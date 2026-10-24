@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RES Financial Model（general）</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="py-splash">
+  <div class="py-box">
+    <div class="py-logo">RES Financial Model</div>
+    <div class="py-spin"></div>
+    <div class="py-msg">正在载入计算引擎…</div>
+    <div class="py-note">首次打开需下载约 16 MB 运行时，之后会走浏览器缓存。</div>
+  </div>
+</div>
+<style>
+#py-splash{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;
+  background:#f4f7fa;color:#16324f;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+#py-splash .py-box{text-align:center}
+#py-splash .py-logo{font-size:20px;font-weight:700;letter-spacing:.2px;color:#1F4E79}
+#py-splash .py-spin{width:28px;height:28px;margin:18px auto;border:3px solid #dbe4ee;
+  border-top-color:#1F4E79;border-radius:50%;animation:pyspin 1s linear infinite}
+@keyframes pyspin{to{transform:rotate(360deg)}}
+#py-splash .py-msg{font-size:13.5px;color:#33586d}
+#py-splash .py-note{margin-top:8px;font-size:12px;color:#7b8fa3}
+</style>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <img class="brand-logo" src="yellowfir-logo.png" alt="yellowfir">
+      <div class="brand-text">
+        <h1 id="app-title">RES Financial Model（general）</h1>
+        <p>光伏 / 风电 · 储能 · 全周期现金流<br>
+          <span class="en">PV / Wind · Storage · Full-lifecycle cash flow</span></p>
+      </div>
+    </div>
+
+    <div class="preset-bar">
+      <span class="preset-label">情景预设<span class="en">Scenarios</span></span>
+      <div class="segmented" id="presets"></div>
+    </div>
+
+    <div class="profile-bar">
+      <span class="profile-label">测算记录<span class="en">Saved runs</span></span>
+      <div class="profile-row">
+        <input id="profile-name" placeholder="命名这条记录… Name" maxlength="40" autocomplete="off">
+        <button class="btn small primary" id="btn-profile-save">保存</button>
+      </div>
+      <div class="profile-row">
+        <select id="profile-select"><option value="">— 选择记录 —</option></select>
+        <button class="btn small ghost danger" id="btn-profile-del" title="删除所选记录">删除</button>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><i class="lg-input"></i>蓝框＝可输入 Input</span>
+      <span><i class="lg-calc"></i>虚框＝自动计算 Calculated</span>
+      <span><i class="lg-ref"></i>灰字＝引用 Reference</span>
+    </div>
+
+    <div class="searchbox">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round">
+        <circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>
+      </svg>
+      <input id="param-search" type="text" placeholder="搜索参数… Search parameters…" autocomplete="off" spellcheck="false">
+    </div>
+
+    <div class="groups" id="groups"></div>
+
+    <div class="build-stamp" id="build-stamp" hidden></div>
+
+    <div class="sidebar-foot">
+      <button class="btn ghost" id="btn-reset">重置默认<span class="en">Reset</span></button>
+      <button class="btn primary" id="btn-export">导出 Excel<span class="en">Export</span></button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="titleblock">
+        <h2 id="view-title">核心指标<span class="en">Key Metrics</span></h2>
+        <div class="meta" id="meta-line"></div>
+      </div>
+      <div class="top-actions">
+        <span class="license-chip" id="license-chip" hidden>
+          <i></i><span id="license-chip-text">永久授权</span>
+        </span>
+        <span class="wacc-chip" id="wacc-chip" title="WACC 外部数据源状态">
+          <i></i><span id="wacc-chip-text">WACC 数据 Data</span>
+        </span>
+        <button class="btn small ghost" id="btn-wacc" title="联网刷新 WACC 数据 Refresh WACC online">⟳ 刷新 Refresh</button>
+        <span class="status" id="status"><i></i>就绪 Ready</span>
+        <button class="btn primary" id="btn-calc"><span class="kbd">⌘R</span>计算 Calculate</button>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs"></nav>
+
+    <div class="content" id="content">
+      <section class="view" id="view-overview">
+        <div class="cards" id="cards"></div>
+
+        <div class="chart-row">
+          <div class="panel chart-panel">
+            <div class="panel-head">
+              <h3>累计净现金流<span class="en">Cumulative Net Cash Flow</span></h3>
+              <div class="legend">
+                <span><i style="background:#27ae60"></i>全投资<span class="en">Project</span></span>
+                <span><i style="background:#2980b9"></i>资本金<span class="en">Equity</span></span>
+              </div>
+            </div>
+            <div class="chart" id="chart-cum"></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-head">
+              <h3>年度收入与经营成本<span class="en">Annual Revenue &amp; Operating Cost</span></h3>
+              <div class="legend">
+                <span><i style="background:#27ae60"></i>营业收入<span class="en">Revenue</span></span>
+                <span><i style="background:#e67e22"></i>经营成本<span class="en">OpEx</span></span>
+              </div>
+            </div>
+            <div class="chart" id="chart-flow"></div>
+          </div>
+        </div>
+
+        <div class="panel first-year-panel">
+          <div class="panel-head">
+            <h3>首年经营情况<span class="en">First-Year Operation</span></h3>
+            <span class="hint">单位：万元<span class="en">Unit: 10K CNY</span></span>
+          </div>
+          <div class="fy-grid" id="first-year"></div>
+        </div>
+      </section>
+
+      <section class="view hidden" id="view-table">
+        <div class="panel table-panel">
+          <div class="panel-head">
+            <h3 id="table-title">损益表<span class="en">Income Statement</span></h3>
+            <span class="hint" id="table-hint">单位：万元 · 建设期行以浅蓝底标示<span class="en">Unit: 10K CNY · Construction-period rows shaded blue</span></span>
+          </div>
+          <div class="table-wrap" id="table-wrap">
+            <table class="data-table" id="data-table"></table>
+          </div>
+          <div class="table-foot hidden" id="table-foot"></div>
+        </div>
+      </section>
+
+      <section class="view hidden" id="view-scenario">
+        <div class="panel table-panel">
+          <div class="panel-head">
+            <h3>情景对比<span class="en">Scenario Comparison</span></h3>
+            <button class="btn small ghost" id="btn-scen">重新计算<span class="en">Recalculate</span></button>
+          </div>
+          <div class="scenario-body">
+            <p class="hint">以左侧当前参数为基准，叠加「基准 / 保守 / 乐观」三套预设。<span class="en">Overlays Base / Conservative / Optimistic presets on the current sidebar inputs.</span></p>
+            <table class="data-table scenario-table" id="scen-table"></table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="license-gate hidden" id="license-gate">
+  <div class="license-modal" role="dialog" aria-modal="true">
+    <div class="license-head">
+      <h2><span id="license-title">使用时间已用完</span><span class="en" id="license-title-en">Trial ended</span></h2>
+      <p id="license-reason">购买后即可继续使用全部功能。</p>
+      <p class="license-device" id="license-device" hidden>设备号 Device ID：<code id="license-device-value"></code><button class="btn small ghost" id="license-device-copy" type="button">复制 Copy</button></p>
+      <p class="license-device" id="license-order-line" hidden>订单号 Order ID：<code id="license-order-value"></code><button class="btn small ghost" id="license-order-copy" type="button">复制 Copy</button></p>
+    </div>
+    <div class="license-plans" id="license-plans"></div>
+    <div class="license-actions">
+      <button class="btn ghost" id="license-refresh">我已付款，刷新状态</button>
+      <div class="license-restore">
+        <input id="license-order" placeholder="输入订单号恢复购买 Order ID">
+        <button class="btn small ghost" id="license-restore-btn">恢复购买</button>
+      </div>
+      <button class="btn ghost hidden" id="license-later">继续试用 Continue trial</button>
+      <button class="btn ghost" id="license-quit">退出</button>
+    </div>
+    <details class="license-transfer">
+      <summary>换电脑了？迁移授权 Move license to this computer</summary>
+      <p>输入原电脑上的订单号，服务端会把授权转移到本机，剩余时间自动跟随，原电脑随即停用。每份授权可自助迁移 3 次，两次迁移需间隔 7 天。</p>
+      <div class="license-restore">
+        <input id="license-transfer-order" placeholder="输入原订单号 Order ID">
+        <button class="btn small ghost" id="license-transfer-btn" type="button">迁移到本机</button>
+      </div>
+    </details>
+    <p class="license-note" id="license-note"></p>
+  </div>
+</div>
+
+<div class="export-gate hidden" id="export-gate">
+  <div class="export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title">
+    <div class="export-head">
+      <h2 id="export-title">导出 Excel<span class="en">Export to Excel</span></h2>
+      <button class="btn small ghost" id="export-close" type="button">关闭 Close</button>
+    </div>
+    <div class="export-langs" id="export-langs">
+      <label><input type="radio" name="export-lang" value="pair" checked><span>跟随界面语言（主/副对照）<span class="en">Follow UI language pair</span></span></label>
+      <label><input type="radio" name="export-lang" value="bi"><span>中英对照<span class="en">Bilingual</span></span></label>
+      <label><input type="radio" name="export-lang" value="en"><span>English</span></label>
+      <label><input type="radio" name="export-lang" value="zh-CN"><span>简体中文<span class="en">Simplified Chinese</span></span></label>
+      <label><input type="radio" name="export-lang" value="zh-TW"><span>繁體中文<span class="en">Traditional Chinese</span></span></label>
+    </div>
+    <button class="btn primary export-all" id="export-all" type="button">
+      <span>下载全部表格<span class="en">All 16 tables · one file, one tab each</span></span>
+      <span class="export-arrow">↓</span>
+    </button>
+    <p class="export-hint">每张表独立一个 tab；文件名与 tab 名统一为英文。中英对照 / 简体：货币为人民币万元；English / 繁體：货币按 k 显示（1 万元 = 10 k）。</p>
+    <div class="export-tables" id="export-tables"></div>
+  </div>
+</div>
+
+<script>window.__BUILD_STAMP__='2026-10-24 10:42';</script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.28.0/full/pyodide.js"></script>
+<script src="bridge.js"></script>
+<script src="license.js"></script>
+<script src="app.js"></script>
+<script src="demo-shell.js"></script>
+</body>
+</html>
