@@ -61,7 +61,7 @@ const LicenseUI = (() => {
     const dev = $("license-device");
     const devVal = $("license-device-value");
     if (dev && devVal) {
-      const hash = st && st.device_hash;
+      const hash = (st && (st.machine_code || st.device_hash)) || "";
       dev.hidden = !hash;
       if (hash) devVal.textContent = hash;
     }
@@ -270,7 +270,7 @@ const LicenseUI = (() => {
         catch (_) { setNote("请手动选中" + label + "复制。"); }
       }
     };
-    $("license-device-copy").addEventListener("click", copyField("license-device-value", "设备号"));
+    $("license-device-copy").addEventListener("click", copyField("license-device-value", "机器码"));
     $("license-order-copy").addEventListener("click", copyField("license-order-value", "订单号"));
     $("license-chip").addEventListener("click", async () => {
       const st = await window.pywebview.api.license_status();

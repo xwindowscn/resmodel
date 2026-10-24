@@ -573,6 +573,10 @@ class Api:
         st = self.license.status()
         if st.get("enabled"):
             st["device_hash"] = self.license.device_hash()
+            try:
+                st["machine_code"] = self.license.machine_code()
+            except Exception:
+                st["machine_code"] = st["device_hash"][:16].upper()
             lic = st.get("license") or {}
             if lic.get("order_id"):
                 st["order_id"] = lic["order_id"]

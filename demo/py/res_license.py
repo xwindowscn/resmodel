@@ -136,6 +136,11 @@ class Client:
         self._hash = hash_device_uuid(self._uuid)
         return self._hash
 
+    def machine_code(self) -> str:
+        """客户可见的机器码：device_hash 前 16 位，按 4 位分组。"""
+        h = self.device_hash()[:16].upper()
+        return "-".join(h[i:i + 4] for i in range(0, 16, 4))
+
     def _load(self):
         try:
             with open(self.state_path, encoding="utf-8") as f:
