@@ -54,7 +54,7 @@
     document.body.appendChild(bar);
     const st = document.createElement("style");
     st.textContent = `
-#demo-bar{position:fixed;top:10px;right:14px;z-index:9999;display:flex;align-items:center;gap:10px;
+#demo-bar{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:99999;display:flex;align-items:center;gap:10px;
   background:rgba(255,255,255,.96);border:1px solid #d7e2ee;border-radius:999px;padding:6px 12px;
   box-shadow:0 4px 16px rgba(20,55,90,.10);font-size:12.5px;color:#22414d;
   font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
