@@ -214,7 +214,7 @@
     if (DEVICE_HASH) return true;
     try {
       DEVICE_HASH = await sha256Hex("resmodel-web:" + fingerprint());
-      const r = await post("/v1/register", { device_hash: DEVICE_HASH, app_version: "web-demo" });
+      const r = await post("/v1/register", { device_hash: DEVICE_HASH, app_version: "web-demo", origin: "web" });
       applyState(r);
       return true;
     } catch (e) { return false; }

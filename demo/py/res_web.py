@@ -26,7 +26,7 @@ from res_schema import (GROUPS, CHOICES, TABLE_SPECS, SPECIAL_TABLES, CCY_CODES,
 from res_export import export_workbook, SHEET_EN, LANGS, ALL_SHEETS
 import res_license
 
-APP_VERSION = "3.6.1"
+APP_VERSION = "3.6.2"
 
 # 左栏"算出来的"字段：不作为输入参数，随每次计算刷新（对应网页版的 .field.computed）
 DERIVED_FIELDS = {
