@@ -27,6 +27,9 @@ header{border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba
 .nav nav a{color:#33475b}
 .btn{display:inline-block;padding:10px 20px;border-radius:8px;font-weight:600;font-size:14px;border:1px solid transparent}
 .btn-primary{background:var(--navy);color:#fff}
+/* 导航里的按钮容易被 .nav nav a 的深色覆盖，这里显式拉高优先级 */
+.nav nav a.btn-primary,.nav a.btn-primary{color:#fff !important;background:var(--navy)}
+.nav nav a.btn-primary:hover,.nav a.btn-primary:hover{background:var(--navy-d);color:#fff}
 .btn-primary:hover{background:var(--navy-d);text-decoration:none}
 .btn-ghost{border-color:var(--line);color:var(--navy);background:#fff}
 .btn-ghost:hover{border-color:var(--navy);text-decoration:none}
@@ -122,6 +125,58 @@ footer a{color:#44586d}
       <div class="card"><h3>决策信息模版</h3><p>可编辑的投资构成模版，EPC、管理费、前期费用分项列示并自动校验结余。</p></div>
       <div class="card"><h3>中英文与导出</h3><p>界面与导出文件中英对照；结果可导出为 Excel 工作簿，便于复核与归档。</p></div>
     </div>
+  </div>
+</section>
+
+
+<section id="what">
+  <div class="wrap">
+    <h2>它能帮你回答什么问题<span class="en">What questions it answers</span></h2>
+    <div class="grid">
+      <div class="card"><h3>这个项目到底赚不赚钱？</h3><p>全投资与资本金 IRR、NPV、回收期，按你输入的电价、造价、发电量直接算出，并给出敏感性区间。</p></div>
+      <div class="card"><h3>银行会给我多少贷款？</h3><p>按 DSCR 与 ICR 反推可承受的杠杆与期限，逐年给出偿债覆盖率，标出最低年份。</p></div>
+      <div class="card"><h3>电价定多少才够？</h3><p>给定目标 IRR 反算临界电价；或给定电价反算盈亏平衡负荷率与盈亏平衡造价。</p></div>
+      <div class="card"><h3>储能配多大合适？</h3><p>按配置比例与时长建模，储能 EPC、初始总投资、全寿命周期总投资分三段列示，电芯更换按实际年度计入现金流。</p></div>
+      <div class="card"><h3>税与优惠怎么影响回报？</h3><p>企业所得税（含免税期）、增值税全链（价税分离、留抵结转）、地方提留，逐项可开关。</p></div>
+      <div class="card"><h3>不同方案差多少？</h3><p>情景对比与多因素敏感性，直接把"造价涨 10%、电价降 5%"这类问题量化成 IRR 的点差。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="method" style="background:var(--bg-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+  <div class="wrap">
+    <h2>模型怎么算<span class="en">How the model works</span></h2>
+    <p class="lead">不是一张 Excel 套公式，而是一个三表联动、口径可追溯的计算引擎。</p>
+    <div class="grid">
+      <div class="card"><h3>三表联动</h3><p>损益表 → 现金流 → 资产负债表自动勾稽，逐年校验平衡（差额为 0 才算通过）。</p></div>
+      <div class="card"><h3>口径分离</h3><p>全投资与资本金两套现金流严格分开：全投资按息税前计税、不含融资与预提税；资本金含还本付息与预提税。</p></div>
+      <div class="card"><h3>可追溯</h3><p>每个参数都有单位与取值说明；导出为 Excel 后可逐格复核算式，不锁公式。</p></div>
+      <div class="card"><h3>多币种 WACC</h3><p>按国别的无风险利率、国别风险溢价与行业 βu 合成 WACC，折现币种可选人民币/美元/本币。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="included">
+  <div class="wrap">
+    <h2>购买后包含什么<span class="en">What's included</span></h2>
+    <div class="grid">
+      <div class="card"><h3>软件本体</h3><p>macOS 与 Windows 桌面版（按平台下载），离线运行，计算不限次数。</p></div>
+      <div class="card"><h3>14 张专业报表</h3><p>损益、全投资现金流、资本金现金流、还本付息、资产负债表、总成本、销售收入、资金筹措、折旧、摊销、财务计划等。</p></div>
+      <div class="card"><h3>Excel 导出</h3><p>模型结果一键导出工作簿（中英双语可选），便于归档、复核与提交。</p></div>
+      <div class="card"><h3>版本更新</h3><p>许可期内免费获得同大版本更新；口径变更会在更新说明中列明。</p></div>
+    </div>
+    <p class="meta" style="margin-top:14px;font-size:12.5px;color:var(--muted)">
+      购买前建议先用 <a href="#download">安装包的 1 小时免费试用</a> 或 <a href="#demo">网页体验版</a> 确认是否满足需求。
+    </p>
+  </div>
+</section>
+
+<section id="demo" style="background:var(--bg-2);border-top:1px solid var(--line)">
+  <div class="wrap">
+    <h2>网页体验版<span class="en">Web demo</span></h2>
+    <p class="lead">在浏览器里直接试算，无需安装。体验版开放 <b>8 项关键参数</b>（装机、电价、发电小时、储能配置、EPC 单价、债务比例与利率），其余参数锁定，结果带体验版水印。</p>
+    <p><a class="btn btn-primary" href="demo.html">打开体验版 Open demo</a></p>
+    <p class="meta" style="margin-top:10px;font-size:12.5px;color:var(--muted)">体验版与桌面版同一套计算引擎；完整参数、敏感性分析、情景对比与导出功能需在桌面版使用。</p>
   </div>
 </section>
 
