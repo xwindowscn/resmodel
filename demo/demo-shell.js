@@ -238,10 +238,7 @@
 
   async function ensureDevice() {
     if (DEVICE_HASH) return true;
-    if (await tryHandshake()) {
-      if (!LICENSED) heartbeat();
-      return true;
-    }
+
     try {
       DEVICE_HASH = await sha256Hex("resmodel-web:" + fingerprint());
       const r = await post("/v1/register", { device_hash: DEVICE_HASH, app_version: "web-demo", origin: "web" });
@@ -293,6 +290,7 @@
       '<div class="st" id="dmc-st">' + (LICENSED ? "状态：已授权" : "状态：未授权（可先用体验模式）") + "</div>" +
       '<div class="row"><button class="primary" id="dmc-copy">复制机器码</button>' +
       '<button id="dmc-refresh">开通了吗？刷新状态</button>' +
+      '<button id="dmc-link">本机已装 app？一键直连</button>' +
       '<button id="dmc-close">关闭</button></div>';
     document.body.appendChild(box);
     const copy = box.querySelector("#dmc-copy");
@@ -302,6 +300,15 @@
       setTimeout(() => (copy.textContent = "复制机器码"), 1500);
     };
     box.querySelector("#dmc-close").onclick = () => box.remove();
+    box.querySelector("#dmc-link").onclick = async () => {
+      const st = box.querySelector("#dmc-st");
+      if (st) st.textContent = "正在连接本机 app…（浏览器可能询问是否允许访问本地网络，请选允许）";
+      const ok = await tryHandshake();
+      if (LICENSED) { box.remove(); return; }
+      if (st) st.textContent = ok
+        ? "已连上本机 app，但这台机器尚未授权；请把上面的机器码发给客服"
+        : "未检测到本机 app（需先打开桌面版），或浏览器拒绝了本地网络访问";
+    };
     box.querySelector("#dmc-refresh").onclick = async () => {
       await heartbeat();
       const st = box.querySelector("#dmc-st");
