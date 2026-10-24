@@ -2,7 +2,8 @@
 (function () {
   "use strict";
 
-  const TRIAL_MS = 10 * 60 * 1000;
+  const TRIAL_SECONDS = 600;          // 体验版 10 分钟
+  const TRIAL_MS = TRIAL_SECONDS * 1000;
   const K_END = "resmodel_demo_end_v1";
   const K_SEEN = "resmodel_demo_locked_notice_v1";
 
@@ -25,6 +26,7 @@
   let timer = null;
   let LICENSED = false;
   let DEVICE_HASH = "";
+  let SERVER_USED = null;             // 服务端累计试用秒数（D1 trial_used_seconds）
   let lastBeat = Date.now();
   const LICENSE_BASE = "https://license.resmodel.com";
 
@@ -257,7 +259,29 @@
   function applyState(res) {
     const st = res && res.state;
     if (!st) return;
+    if (typeof st.trial_used === "number") SERVER_USED = st.trial_used;
     if (st.licensed) unlock(st.license);
+    else if (usedSeconds() >= TRIAL_SECONDS && !locked) forceLock();
+  }
+
+  function usedSeconds() {
+    const local = endAt ? Math.max(0, Math.round((Date.now() - (endAt - TRIAL_MS)) / 1000)) : 0;
+    if (SERVER_USED === null) return local;
+    return Math.max(SERVER_USED, Math.min(local, SERVER_USED + 120)); // 离线时最多多算 2 分钟
+  }
+
+  function forceLock() {
+    locked = true;
+    window.__EXPORT_BLOCKED__ = true;
+    if (timer) { clearInterval(timer); timer = null; }
+    const bar = document.getElementById("demo-bar");
+    if (bar) bar.classList.add("locked");
+    const chip = document.getElementById("db-chip");
+    if (chip) chip.textContent = "体验模式 · 16 项可调";
+    const note = document.getElementById("db-note");
+    if (note) note.textContent = "其余参数已锁定 · 不可导出";
+    applyLock();
+    showLockedModal();
   }
   function unlock(lic) {
     if (LICENSED) return;
@@ -322,28 +346,19 @@
   }
 
   function tick() {
-    const left = endAt - Date.now();
-    const t = $("db-time"), chip = $("db-chip"), note = $("db-note"), bar = $("demo-bar");
-    if (left <= 0) {
-      if (!locked) {
-        locked = true;
-        window.__EXPORT_BLOCKED__ = true;
-        window.__EXPORT_BLOCKED_MSG__ = "体验版不可导出，正式版可导出 Excel";
-        if (bar) bar.classList.add("locked");
-        if (chip) chip.innerHTML = "体验模式 · 16 项可调";
-        if (note) note.textContent = "其余参数已锁定 · 不可导出";
-        applyLock();
-        showLockedModal();
-      }
+    const t = $("db-time");
+    const remaining = TRIAL_SECONDS - usedSeconds();
+    if (remaining <= 0) {
+      if (!locked) forceLock();
       if (timer) { clearInterval(timer); timer = null; }
       return;
     }
-    if (t) t.textContent = fmt(left);
+    if (t) t.textContent = fmt(remaining * 1000);
   }
 
   function start() {
     endAt = loadEnd();
-    locked = endAt <= Date.now();
+    locked = endAt <= Date.now() || usedSeconds() >= TRIAL_SECONDS;
     // 体验版全程不可导出（业主要求：首次 10 分钟也不可导出）
     window.__EXPORT_BLOCKED__ = true;
     window.__EXPORT_BLOCKED_MSG__ = "体验版不可导出，正式版可导出 Excel";
