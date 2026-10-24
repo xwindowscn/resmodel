@@ -330,6 +330,23 @@ class Client:
             res["license"] = self.status()
         return res
 
+    def raw_token(self):
+        with self._lock:
+            return self._token
+
+    def transfer_by_email(self, email: str) -> dict:
+        """换机：按客户邮箱把授权迁到本机（旧机作废）。"""
+        res = self._post("/v1/transfer-email", {
+            "device_hash": self.device_hash(),
+            "email": str(email or "").strip().lower(),
+        })
+        if res.get("ok"):
+            self._take_token(res)
+            res["license"] = self.status()
+            if res.get("moved_from"):
+                res["moved_from"] = res["moved_from"]
+        return res
+
     def transfer(self, order_id: str) -> dict:
         res = self._post("/v1/transfer", {
             "device_hash": self.device_hash(),

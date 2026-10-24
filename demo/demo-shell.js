@@ -210,8 +210,38 @@
     });
     return await r.json();
   }
+  async function fetchT(url, ms) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), ms || 900);
+    try { return await fetch(url, { signal: ctl.signal, cache: "no-store", mode: "cors" }); }
+    finally { clearTimeout(t); }
+  }
+
+  // 本机握手：同机装了已授权 app 时，网页免输入直接可用，且与 app 共用一个机器码
+  async function tryHandshake() {
+    for (let port = 47653; port < 47661; port++) {
+      try {
+        const r = await fetchT("http://127.0.0.1:" + port + "/handshake", 900);
+        if (!r.ok) continue;
+        const d = await r.json();
+        if (!d || d.v !== 1) continue;
+        if (d.device_hash) DEVICE_HASH = d.device_hash;
+        if (d.token) {
+          const v = await post("/v1/verify", { token: d.token });
+          if (v && v.ok && v.state) { applyState(v); return true; }
+        }
+        return true;
+      } catch (e) {}
+    }
+    return false;
+  }
+
   async function ensureDevice() {
     if (DEVICE_HASH) return true;
+    if (await tryHandshake()) {
+      if (!LICENSED) heartbeat();
+      return true;
+    }
     try {
       DEVICE_HASH = await sha256Hex("resmodel-web:" + fingerprint());
       const r = await post("/v1/register", { device_hash: DEVICE_HASH, app_version: "web-demo", origin: "web" });

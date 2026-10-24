@@ -26,7 +26,7 @@ from res_schema import (GROUPS, CHOICES, TABLE_SPECS, SPECIAL_TABLES, CCY_CODES,
 from res_export import export_workbook, SHEET_EN, LANGS, ALL_SHEETS
 import res_license
 
-APP_VERSION = "3.6.2"
+APP_VERSION = "3.6.3"
 
 # 左栏"算出来的"字段：不作为输入参数，随每次计算刷新（对应网页版的 .field.computed）
 DERIVED_FIELDS = {
@@ -594,8 +594,18 @@ class Api:
     def license_restore(self, order_id):
         return self.license.restore(str(order_id))
 
-    def license_transfer(self, order_id):
-        return self.license.transfer(str(order_id))
+    def license_transfer(self, key):
+        """换机：订单号（ord_…）走订单迁移；其余按客户邮箱迁移。"""
+        v = str(key or "").strip()
+        if v.startswith("ord_"):
+            return self.license.transfer(v)
+        return self.license.transfer_by_email(v)
+
+    def machine_code(self):
+        try:
+            return self.license.machine_code()
+        except Exception:
+            return ""
 
     def quit(self):
         if self.window is not None:
@@ -1035,6 +1045,83 @@ def selftest():
         pass  # windowed (no-console) builds have no stdout
 
 
+# ── 本机握手：只对本机网页（resmodel.com）回答「这台机器已授权」 ──────────
+HANDSHAKE_PORTS = range(47653, 47661)
+HANDSHAKE_ORIGINS = ("https://resmodel.com", "https://www.resmodel.com")
+
+
+def start_handshake_server(client, ports=HANDSHAKE_PORTS):
+    """在 127.0.0.1 起一个只读小服务，供同机浏览器验证授权。返回端口或 0。"""
+    import http.server
+    import json as _json
+    import socketserver
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        server_version = "RESHandshake/1.0"
+
+        def _cors(self):
+            origin = self.headers.get("origin", "")
+            ok = origin in HANDSHAKE_ORIGINS or origin.startswith("http://127.0.0.1") or origin.startswith("http://localhost")
+            if ok:
+                self.send_header("access-control-allow-origin", origin)
+                self.send_header("vary", "origin")
+            self.send_header("access-control-allow-headers", "content-type")
+            self.send_header("access-control-allow-methods", "GET, OPTIONS")
+            self.send_header("access-control-allow-private-network", "true")
+            self.send_header("cache-control", "no-store")
+
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self._cors()
+            self.end_headers()
+
+        def do_GET(self):
+            if self.path.split("?")[0] != "/handshake":
+                self.send_error(404)
+                return
+            try:
+                st = client.status()
+                lic = {
+                    "licensed": bool(st.get("licensed")),
+                    "plan_id": (st.get("plan_id") or (st.get("license") or {}).get("plan_id") or ""),
+                    "expires_at": (st.get("license") or {}).get("expires_at"),
+                }
+                body = _json.dumps({
+                    "v": 1,
+                    "app": APP_NAME,
+                    "machine_code": client.machine_code(),
+                    "device_hash": client.device_hash(),
+                    "licensed": lic["licensed"],
+                    "plan_id": lic["plan_id"],
+                    "expires_at": lic["expires_at"],
+                    "token": client.raw_token(),
+                }).encode("utf-8")
+            except Exception as ex:
+                body = _json.dumps({"v": 1, "error": str(ex)}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("content-type", "application/json; charset=utf-8")
+            self._cors()
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    for port in ports:
+        try:
+            srv = Server(("127.0.0.1", port), Handler)
+        except OSError:
+            continue
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        return port
+    return 0
+
+
 def main():
     if "--selftest" in sys.argv:
         selftest()
@@ -1053,6 +1140,13 @@ def main():
     )
     api.window = window
     lic.start()
+    if getattr(lic, "enabled", False):
+        try:
+            _p = start_handshake_server(lic)
+            if _p:
+                print(f"[handshake] 127.0.0.1:{_p}")
+        except Exception as _e:
+            print(f"[handshake] disabled: {_e}")
     webview.start()
     lic.stop()
 
