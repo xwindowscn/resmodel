@@ -2,7 +2,7 @@
 (function () {
   "use strict";
 
-  const TRIAL_SECONDS = 1200;         // 体验版 20 分钟（一次性，不做续期）
+  const TRIAL_SECONDS = 720;          // 体验版：每台设备每天 12 分钟
   const TRIAL_MS = TRIAL_SECONDS * 1000;
   const K_END = "resmodel_demo_end_v1";
   const K_SEEN = "resmodel_demo_locked_notice_v1";
@@ -34,11 +34,19 @@
 
   /* ── 计时 ── */
   function loadEnd() {
-    let v = 0;
-    try { v = parseInt(localStorage.getItem(K_END) || "0", 10) || 0; } catch (e) {}
-    if (!v) {
+    // 按"天"重置：同一台设备每天各有 TRIAL_SECONDS 秒完整体验
+    const today = new Date().toISOString().slice(0, 10);
+    let v = 0, day = "";
+    try {
+      v = parseInt(localStorage.getItem(K_END) || "0", 10) || 0;
+      day = localStorage.getItem(K_END + "_day") || "";
+    } catch (e) {}
+    if (!v || day !== today) {
       v = Date.now() + TRIAL_MS;
-      try { localStorage.setItem(K_END, String(v)); } catch (e) {}
+      try {
+        localStorage.setItem(K_END, String(v));
+        localStorage.setItem(K_END + "_day", today);
+      } catch (e) {}
     }
     return v;
   }
@@ -55,7 +63,7 @@
     bar.id = "demo-bar";
     bar.innerHTML =
       '<span class="db-chip" id="db-chip">体验版 · 全功能剩余 <b id="db-time">--:--</b></span>' +
-      '<span class="db-note" id="db-note">20 分钟内可改全部参数，不可导出</span>' +
+      '<span class="db-note" id="db-note">每天 12 分钟内可改全部参数，不可导出</span>' +
       '<button type="button" class="db-code" id="db-code-btn">机器码</button>' +
       '<a class="db-buy" href="https://resmodel.com/#pricing" target="_blank" rel="noopener">购买正式版 →</a>';
     document.body.appendChild(bar);
@@ -161,7 +169,7 @@
     m.innerHTML = `<div class="dm">
       <h3>20 分钟全功能体验已结束</h3>
       <p>现在进入<b>体验模式</b>：仍可修改 <b>16 项</b>关键参数（装机、发电小时、电价、储能、EPC 单价、融资与汇率），其余参数锁定，全部报表继续实时重算。</p>
-      <p style="color:#6b8397;font-size:13px">The 20-minute full trial has ended. Sixteen key assumptions remain editable; everything else is locked and all statements keep recalculating live.</p>
+      <p style="color:#6b8397;font-size:13px">The 12-minute daily trial has ended. Sixteen key assumptions remain editable; everything else is locked and all statements keep recalculating live.</p>
       <div class="acts">
         <button class="primary" id="dm-ok">继续体验</button>
         <a href="https://resmodel.com/#pricing" target="_blank" rel="noopener">查看正式版</a>
