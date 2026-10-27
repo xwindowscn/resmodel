@@ -353,7 +353,7 @@ def _app_name():
     except OSError:
         pass
     if not base:
-        base = "RES Financial Model（general）"
+        base = "RES Financial Model"
     tag = f"v{APP_VERSION}"
     if tag in base:
         return base
