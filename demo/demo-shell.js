@@ -368,7 +368,7 @@
   function start() {
     endAt = loadEnd();
     locked = endAt <= Date.now() || usedSeconds() >= TRIAL_SECONDS;
-    // 体验版全程不可导出（业主要求：首次 20 分钟也不可导出）
+    // 体验版全程不可导出（业主要求：首次 12 分钟也不可导出）
     window.__EXPORT_BLOCKED__ = true;
     window.__EXPORT_BLOCKED_MSG__ = "体验版不可导出，正式版可导出 Excel";
     makeBar();
