@@ -5,6 +5,7 @@
 界面在 web/ 目录；计算全部由 res_engine.compute 完成。
 """
 import json
+import re
 import os
 import sys
 import time
@@ -26,7 +27,7 @@ from res_schema import (GROUPS, CHOICES, TABLE_SPECS, SPECIAL_TABLES, CCY_CODES,
 from res_export import export_workbook, SHEET_EN, LANGS, ALL_SHEETS
 import res_license
 
-APP_VERSION = "3.6.3"
+APP_VERSION = "3.7.8"
 
 # 左栏"算出来的"字段：不作为输入参数，随每次计算刷新（对应网页版的 .field.computed）
 DERIVED_FIELDS = {
@@ -108,6 +109,23 @@ def _is_money_unit(u):
     return u.startswith("万元") or u.startswith("元/")
 
 
+def lang_code_of(v: str) -> str:
+    import re as _r
+    v = str(v or "").strip()
+    m = _r.search(r"\(([A-Za-z-]{2,5})\)$", v)
+    if m:
+        return m.group(1)
+    return v if v in LANG_CCY else "zh"
+
+
+UNIT_EN_FALLBACK = {
+    "%（按发电收入）": "% of revenue",
+    "元/kWh": "CNY/kWh", "元/W": "CNY/W", "元/Wp": "CNY/Wp", "元/Wh": "CNY/Wh",
+    "万元": "10K CNY", "万元/年": "10K CNY/yr", "万元/人·年": "10K CNY/person·yr",
+    "年": "yr", "月": "month", "天": "day", "小时": "h", "人次": "person-times",
+}
+
+
 def _ccy_unit(u, wan, usd=True, prefix="美元"):
     u = str(u or "")
     if not usd or not _is_money_unit(u):
@@ -115,7 +133,7 @@ def _ccy_unit(u, wan, usd=True, prefix="美元"):
     return wan if u.startswith("万元") else u.replace("元/", prefix + "/", 1)
 
 
-def _ccy_unit_en(u, wan_en, usd=True, prefix="美元"):
+def _ccy_unit_en(u, wan_en, usd=True, prefix="美元", code="USD"):
     u = str(u or "")
     if not _is_money_unit(u):
         return en(u) if u else u
@@ -123,7 +141,7 @@ def _ccy_unit_en(u, wan_en, usd=True, prefix="美元"):
         return en(u) if en(u) else u
     if u.startswith("万元"):
         return wan_en
-    return en(u).replace("CNY/", "USD/", 1) if en(u) else u.replace("元/", "美元/", 1)
+    return en(u).replace("CNY/", code + "/", 1) if en(u) else u.replace("元/", code + "/", 1)
 
 
 NON_MONEY_SRC = {
@@ -131,6 +149,136 @@ NON_MONEY_SRC = {
     "gen", "gen_guar", "gen_mkt", "gen_over", "gen_plant", "gen_storage", "gen_lease",
     "dscr", "icr", "dep_rate", "amort_rate",
 }
+
+
+UNIT_EN_EXACT = {
+    "万元": "10K CNY", "亿元": "100M CNY", "万元/年": "10K CNY/yr", "万元/人·年": "10K CNY/person·yr",
+    "元/kWh": "CNY/kWh", "元/W": "CNY/W", "元/Wp": "CNY/Wp", "元/Wh": "CNY/Wh",
+    "元/千瓦时": "CNY/kWh", "元/平方米": "CNY/m²", "元/MWh·年": "CNY/MWh·yr",
+    "年": "yr", "月": "month", "天": "day", "天/年": "days/yr", "h/年": "h/yr",
+    "公顷": "ha", "人": "persons", "人/100MW": "persons/100MW",
+    "人/100MWh": "persons/100MWh", "人/50MW": "persons/50MW", "%/年": "%/yr",
+    "%（按发电收入）": "% of revenue", "%（末年末）": "% (end of term)",
+}
+
+
+def _all_units():
+    us = set()
+    for _, fields in GROUPS:
+        for f in fields:
+            u = f[3] if len(f) > 3 else ""
+            if u:
+                us.add(u)
+    us |= {"万元", "亿元", "元/kWh", "元/Wp", "元/W", "元/Wh", "万元/年", "万元/人·年", "年", "月", "天", "公顷", "人"}
+    return sorted(us)
+
+
+def _i18n_dict(code):
+    import json as _j, os as _o
+    base = getattr(sys, "_MEIPASS", _o.path.dirname(_o.path.abspath(__file__)))
+    fp = _o.path.join(base, "web", "i18n", f"{code}.json")
+    try:
+        with open(fp, encoding="utf-8") as f:
+            return _j.load(f)
+    except Exception:
+        return {}
+
+
+def _build_unit_map(units, lang, lang2, code, cur_cn, cur_en=None):
+    """服务端预生成单位译文：{原单位: {main, sub}}，前端直接取用，避免客户端查表失败。"""
+    d1, d2 = _i18n_dict(lang), _i18n_dict(lang2) if lang2 and lang2 not in ("none", "zh") else {}
+    code_ref = [code]
+    def _cur(which):
+        lc = lang if which == "main" else (lang2 or lang)
+        return cur_cn if lc in ("zh", "zh-TW") else code
+    which_sub_empty = (not lang2) or lang2 in ("none", "zh")
+    def _seg_tr(txt, d):
+        import re as _r3
+        parts = _r3.split(r"([/·])", txt)
+        out = []
+        for seg in parts:
+            if seg in ("/", "·", ""):
+                out.append(seg); continue
+            out.append(d.get(seg) or seg)
+        return "".join(out)
+
+    def one(u, d, which, lang_code=""):
+        u = str(u or "")
+        if not u:
+            return ""
+        if u == "元/美元":                       # 汇率单位，两币种之比，不随记账币种/语言变
+            return "CNY/USD"
+        if lang_code == "en":                       # 英文：直接用 schema 的英文单位表
+            return (en(u) or UNIT_EN_EXACT.get(u, u)).replace("CNY", code)
+        if lang_code in ("zh", "zh-TW", "none", ""):  # 中文主语言：保持中文口径（仅换币种）
+            pass
+        _whole = d.get(u)
+        if _whole and "CNY" in _whole:
+            return _whole.replace("CNY", code_ref[0])
+        if u.startswith("万元"):
+            lc = lang if which == "main" else (lang2 or lang)
+            head = (f"万{cur_cn}" if lc in ("zh", "zh-TW") else f"10K {code}")
+            sfx = u[2:]                       # /年、/人·年 …
+            base = sfx.lstrip("/")
+            t = d.get(base) or _seg_tr(base, d)
+            return head + ("/" + t if t else sfx)
+        if u.startswith("元/"):
+            head = _cur(which)
+            sfx = u[2:]
+            t = d.get(sfx) or _seg_tr(sfx, d)
+            return head + "/" + t
+        return d.get(u) or u
+    out = {}
+    for u in units:
+        main = one(u, d1, "main", lang)
+        sub = "" if (which_sub_empty or lang2 == lang) else one(u, d2, "sub", lang2)
+        if sub and sub != main:
+            out[u] = {"main": main, "sub": sub}
+        else:
+            out[u] = {"main": main, "sub": ""}
+    return out
+
+
+def _localize_units_en(obj):
+    """英文界面：把纯单位串换成英文（只替换整串，不改正文）。"""
+    def walk(o):
+        if isinstance(o, str):
+            return UNIT_EN_EXACT.get(o.strip(), o)
+        if isinstance(o, dict):
+            return {k: (v if k in ("unit", "unit_en") else walk(v)) for k, v in o.items()}
+        if isinstance(o, list):
+            return [walk(v) for v in o]
+        return o
+    return walk(obj)
+
+
+def _localize_money(obj, code, cn_prefix, munit, munit_en, lang="zh"):
+    """把载荷里硬编码的人民币单位串统一换成本币（单趟替换，避免二次命中）。"""
+    if code == "CNY":
+        return obj
+    table = {
+        "元/Wp": (f"{cn_prefix}/Wp" if lang != "en" else f"{code}/Wp"),
+        "CNY/Wp": f"{code}/Wp",
+        "元/kWh": (f"{cn_prefix}/kWh" if lang != "en" else f"{code}/kWh"),
+        "CNY/kWh": f"{code}/kWh",
+        "元/Wh": (f"{cn_prefix}/Wh" if lang != "en" else f"{code}/Wh"),
+        "CNY/Wh": f"{code}/Wh",
+        "元/W": (f"{cn_prefix}/W" if lang != "en" else f"{code}/W"),
+        "CNY/W": f"{code}/W",
+        "万元": (munit if lang != "en" else munit_en),
+        "人民币 k": f"{code} k", "k CNY": f"k {code}",
+        "人民币": cn_prefix,
+    }
+    pat = re.compile("|".join(sorted((re.escape(k) for k in table), key=len, reverse=True)))
+    def walk(o):
+        if isinstance(o, str):
+            return pat.sub(lambda m: table[m.group(0)], o)
+        if isinstance(o, dict):
+            return {k: (v if k in ("unit", "unit_en") else walk(v)) for k, v in o.items()}
+        if isinstance(o, list):
+            return [walk(v) for v in o]
+        return o
+    return walk(obj)
 
 
 def build_derived(m, scale=1.0, munit="万元", munit_en="10K CNY"):
@@ -269,9 +417,11 @@ class Api:
         rf_cny = float(live.get("rf_cny") or 0.0) * 100
         opts = [
             {"v": "CNY", "t": f"人民币 RMB（10Y {rf_cny:.3f}%）",
-             "t_en": f"Chinese Yuan（10Y {rf_cny:.3f}%）"},
+             "t_en": f"Chinese Yuan（10Y {rf_cny:.3f}%）",
+             "name": "人民币", "name_en": "Chinese Yuan", "code": "RMB", "rate": round(rf_cny, 3)},
             {"v": "USD", "t": f"美元 USD（10Y {rf_usd:.3f}%）",
-             "t_en": f"US Dollar（10Y {rf_usd:.3f}%）"},
+             "t_en": f"US Dollar（10Y {rf_usd:.3f}%）",
+             "name": "美元", "name_en": "US Dollar", "code": "USD", "rate": round(rf_usd, 3)},
         ]
         if local:
             info = WD.LOCAL_CCY_DB.get(local) or {}
@@ -280,6 +430,8 @@ class Api:
                 "v": "LOCAL",
                 "t": f"本国货币 {info.get('cn', local)} {local}（10Y {rf:.3f}%）",
                 "t_en": f"Local {info.get('en', local)} {local}（10Y {rf:.3f}%）",
+                "name": info.get("cn", local), "name_en": info.get("en", local),
+                "code": local, "rate": round(rf, 3),
             })
         return opts
 
@@ -328,15 +480,14 @@ class Api:
         params["risk_free_rate_local"] = (float(local_rf) / 100.0
                                           if local_rf is not None else 0.0)
         rating = str(c.get("rating") or "")
-        cs = float(params.get("credit_spread") or 0.0)
-        for _ in range(4):
-            params["credit_spread"] = cs
-            m = E.compute(**params)
-            nxt = WD.credit_spread(float(m["metrics"]["min_dscr"]), rating) / 100.0
-            if abs(nxt - cs) < 5e-6:
-                break
-            cs = nxt
-        return m
+        # 信用利差 = f(测算用 DSCR, 国别类别)，与 Excel『WACC』表 C48→C42→C34 同口径。
+        # 2026-10-26 起不再用模型自算的 min_dscr 迭代——WACC 属基准取数，不随敏感性漂移。
+        try:
+            _dscr = float(params.get("wacc_dscr") or 0.0) or 1.836
+        except (TypeError, ValueError):
+            _dscr = 1.836
+        params["credit_spread"] = WD.credit_spread(_dscr, rating) / 100.0
+        return E.compute(**params)
 
     # ── 元数据 ────────────────────────────────────────────────────────
     def schema(self):
@@ -344,19 +495,19 @@ class Api:
             {"title": title, "title_en": en(title),
              "fields": [{"key": k, "label": lab, "label_en": en(lab),
                          "kind": kind, "unit": unit,
-                         "unit_en": en(unit) if en(unit) else unit,
+                         "unit_en": en(unit) or UNIT_EN_FALLBACK.get(unit, unit),
                          "hint": (FIELD_HINTS.get(k) or ("", ""))[0],
                          "hint_en": (FIELD_HINTS.get(k) or ("", ""))[1]}
                         for k, lab, kind, unit in fields]}
             for title, fields in GROUPS
         ]
-        tables = [{"name": name, "name_en": en(name),
+        tables = [{"name": name, "name_en": ("Glossary" if name == "术语表" else en(name)),
                    "type": "series",
                    "cols": [t for _, t, _, _ in spec],
                    "cols_en": en_list([t for _, t, _, _ in spec]),
                    "kinds": [kd for _, _, _, kd in spec]}
                   for name, spec in TABLE_SPECS]
-        tables += [{"name": name, "name_en": en(name), "type": kind}
+        tables += [{"name": name, "name_en": ("Glossary" if name == "术语表" else en(name)), "type": kind}
                    for name, kind in SPECIAL_TABLES]
         return {
             "appName": APP_NAME,
@@ -433,10 +584,19 @@ class Api:
         # 计价货币换算（仅显示层，模型内部始终为人民币）
         _ccy_raw = str(params.get("display_ccy") or "CNY")
         _ccy = _ccy_raw if _ccy_raw in CCY_CODES else "CNY"
-        # 显示倍数：人民币金额 ÷ 1 单位目标货币折人民币 = 目标货币金额
-        _scale = 1.0 if _ccy == "CNY" else 1.0 / self._ccy_scaler(_ccy)
+        # 显示倍数：模型内部以"万元人民币"计，先折成本币，再按量级选单位（万/亿/万亿）
         _meta = CCY_MAP.get(_ccy, CCY_MAP["CNY"])
+        _scale = 1.0 if _ccy == "CNY" else 1.0 / self._ccy_scaler(_ccy)
         _munit, _munit_en = _meta["cn"], _meta["en"]
+        import re as _r1
+        _raw_src = raw if isinstance(raw, dict) else {}
+        _lv0 = str(_raw_src.get("ui_lang") or params.get("ui_lang") or "")
+        _mm0 = _r1.search(r"\(([A-Za-z-]{2,5})\)$", _lv0)
+        _lang_code = _mm0.group(1) if _mm0 else (_lv0 if _r1.fullmatch(r"[A-Za-z-]{2,5}", _lv0) else "zh")
+        _lv2 = str(_raw_src.get("ui_lang2") or params.get("ui_lang2") or "")
+        _mm2 = _r1.search(r"\(([A-Za-z-]{2,5})\)$", _lv2)
+        _lang2_code = _mm2.group(1) if _mm2 else ("none" if "无" in _lv2 else "zh")
+
         km = dict(m["metrics"])
         km["unit_cost_w"] = km["unit_cost"] / 1000.0
         km["total_investment"] = m["p"]["total_investment"]
@@ -444,11 +604,14 @@ class Api:
         km["storage_invest"] = m["p"]["storage_invest"]
         km["equity_total"] = m["equity"]
 
+        _loc = lambda o: _localize_money(o, _ccy, _meta["prefix"], _munit, _munit_en, _lang_code)
         cards = [{"key": k, "label": lab, "label_en": en(lab),
                   "cat": cat, "cat_en": en(cat), "unit": CARD_UNITS.get(k, ""),
                   "unit_en": en(CARD_UNITS.get(k, "")),
-                  "unit": _ccy_unit(CARD_UNITS.get(k, ""), _munit, _ccy != "CNY", _meta["prefix"]),
-                  "unit_en": _ccy_unit_en(CARD_UNITS.get(k, ""), _munit_en, _ccy != "CNY", _meta["prefix"]),
+                  "unit": (_ccy_unit(CARD_UNITS.get(k, ""), _munit, True, _meta["prefix"])
+                           if _lang_code in ("zh", "zh-TW")
+                           else _ccy_unit_en(CARD_UNITS.get(k, ""), _munit_en, True, _meta["prefix"], _ccy)),
+                  "unit_en": _ccy_unit_en(CARD_UNITS.get(k, ""), _munit_en, _ccy != "CNY", _meta["prefix"], _ccy),
                   "text": _fmt_card(km.get(k) * _scale
                                     if _is_money_unit(CARD_UNITS.get(k, "")) else km.get(k), kind)}
                  for k, lab, kind, cat in CARD_DEFS]
@@ -464,7 +627,7 @@ class Api:
                                        if src not in NON_MONEY_SRC else resolve_value(m, extra, src, i), kind)
                               for src, _, _, kind in spec],
                 })
-            tables[name] = {"type": "series", "name_en": en(name),
+            tables[name] = {"type": "series", "name_en": ("Glossary" if name == "术语表" else en(name)),
                             "cols": [t for _, t, _, _ in spec],
                             "cols_en": en_list([t for _, t, _, _ in spec]),
                             "kinds": [kd for _, _, _, kd in spec],
@@ -490,7 +653,7 @@ class Api:
                 first.append({"label": label, "label_en": en(label),
                               "value": round(float(v), 1)})
 
-        return {
+        _payload = {
             "ok": True,
             "elapsed": round(time.time() - t0, 3),
             "cards": cards,
@@ -504,7 +667,8 @@ class Api:
                 "genType": m["p"]["gen_type"],
             },
             "firstYear": first,
-            "derived": build_derived(m, _scale, _munit, _munit_en),
+            "derived": _localize_money(build_derived(m, _scale, _munit, _munit_en), _ccy, _meta["prefix"], _munit, _munit_en),
+            "unitMap": _build_unit_map(_all_units(), _lang_code, _lang2_code, _ccy, _meta["prefix"]),
             "ccy": {"code": _ccy, "unit": _munit, "unit_en": _munit_en,
                     "prefix": _meta["prefix"], "rate": round(_scale, 6)},
             "tables": tables,
@@ -533,6 +697,17 @@ class Api:
                 "t": int(m["t"]),
             },
         }
+        _payload = _localize_money(_payload, _ccy, _meta["prefix"], _munit, _munit_en, _lang_code)
+        try:
+            import re as _r2
+            _lv = str(params.get("ui_lang") or "")
+            _mm = _r2.search(r"\(([A-Za-z-]{2,5})\)$", _lv)
+            _lc = _mm.group(1) if _mm else (_lv if _r2.fullmatch(r"[A-Za-z-]{2,5}", _lv) else "zh")
+            if _lc == "en":
+                _payload = _localize_units_en(_payload)
+        except Exception:
+            pass
+        return _payload
 
     def scenarios(self, raw):
         if g := self._gate():
@@ -551,7 +726,7 @@ class Api:
             k = m["metrics"]
             rows.append({
                 "name": name,
-                "name_en": en(name),
+                "name_en": ("Glossary" if name == "术语表" else en(name)),
                 "pirr": fmt_pct(k["project_irr"]),
                 "eirr": fmt_pct(k["equity_irr"]),
                 "npv": fmt_num(k["project_npv"], 0),
@@ -897,11 +1072,17 @@ class Api:
         if lang == "pair" and not langs:
             _pr = (self.last[1] if self.last else {}) or {}
             def _code(v, d):
-                v = str(v or "")
+                v = str(v or "").strip()
+                if not v:
+                    return d
+                if "无" in v:
+                    return "none"
                 m = __import__("re").search(r"\(([A-Za-z-]{2,5})\)$", v)
                 if m:
                     return m.group(1)
-                return "none" if "无" in v else d
+                if __import__("re").fullmatch(r"[A-Za-z-]{2,5}", v):   # 参数里可能已是纯代码
+                    return v
+                return d
             langs = [_code(_pr.get("ui_lang"), "zh"), _code(_pr.get("ui_lang2"), "en")]
         if isinstance(tables, str):
             tables = [tables]
@@ -917,8 +1098,13 @@ class Api:
             part = "All_Tables"
         tags = {"bi": "Bilingual", "en": "English",
                 "zh-CN": "Simplified_Chinese", "zh-TW": "Traditional_Chinese"}
+        # “跟随界面语言（主/副对照）”导出时 lang=pair，按实际语言对命名，避免 KeyError
+        if lang == "pair":
+            pair = [c for c in (langs or []) if c and c != "none"]
+            tags["pair"] = "_".join(pair) if pair else "Bilingual"
         default = f"RES_Financial_Model_{part}_{datetime.date.today():%Y%m%d}_{tags[lang]}.xlsx"
         desktop = os.path.expanduser("~/Desktop")
+        picked, dialog_err = None, None
         try:
             import webview
             picked = self.window.create_file_dialog(
@@ -927,21 +1113,140 @@ class Api:
                 save_filename=default,
                 file_types=("Excel 工作簿 (*.xlsx)",))
         except Exception as ex:
-            return {"ok": False, "error": f"打开保存对话框失败：{ex}"}
-        if not picked:
-            return {"ok": False, "cancelled": True}
-        path = picked[0] if isinstance(picked, (list, tuple)) else picked
+            dialog_err = ex
+        if picked:
+            path = picked[0] if isinstance(picked, (list, tuple)) else picked
+        elif dialog_err is not None:
+            # 对话框不可用（不同 pywebview 版本/远程会话）：回退到桌面，保证能导出
+            path = os.path.join(desktop if os.path.isdir(desktop) else os.path.expanduser("~"), default)
+        else:
+            # 对话框未打开（pywebview 在部分环境下返回 None 而非抛错）：直接落盘到桌面
+            path = os.path.join(desktop if os.path.isdir(desktop) else os.path.expanduser("~"), default)
         if not str(path).lower().endswith(".xlsx"):
             path = str(path) + ".xlsx"
         m, params = self.last
         try:
-            export_workbook(m, params, path, live=self.live, lang=lang, tables=tables)
+            export_workbook(m, params, path, live=self.live, lang=lang, tables=tables,
+                            langs=langs if lang == "pair" else None)
         except Exception as ex:
             return {"ok": False, "error": f"导出失败：{type(ex).__name__}: {ex}"}
         return {"ok": True, "path": str(path), "lang": lang}
 
 
 # ── 自检（无需窗口）───────────────────────────────────────────────────
+
+# ── 表格/模版内容翻译（与前端共用 web/i18n/*.json）─────────────────
+_I18N_CACHE = {}
+
+
+def _lang_label(val):
+    v = str(val or "")
+    if "日本" in v: return "日本語"
+    if "Рус" in v or "俄" in v: return "Русский"
+    if "English" in v or "英语" in v: return "English"
+    return "中文"
+
+
+def _i18n_norm(x):
+    return "".join(str(x).split()).replace("（", "(").replace("）", ")")
+
+
+def _i18n_table(lang):
+    key = str(lang or "").strip().lower()
+    if key in _I18N_CACHE:
+        return _I18N_CACHE[key]
+    code = key
+    for token in ("zh-tw","zh-cn","ru","ja","es","ar","th","id","vi","km","my","lo","kk","ky","uz","tg"):
+        if token in key:
+            code = token; break
+    table = {}
+    if code not in ("", "zh", "zh-cn"):
+        try:
+            with open(asset_path("web", "i18n", f"{code}.json"), encoding="utf-8") as f:
+                for k, v in json.load(f).items():
+                    table[k] = v; table[_i18n_norm(k)] = v
+        except Exception:
+            table = {}
+    _I18N_CACHE[key] = table
+    return table
+
+
+def _tr_text(txt, table):
+    if not isinstance(txt, str) or not table or not txt:
+        return txt
+    if "\n" in txt:
+        head, _, tail = txt.partition("\n")
+        tr = table.get(head) or table.get(_i18n_norm(head)) or head
+        tail = tail.strip()
+        return tr + ("\n" + tail if tail else "")
+    return table.get(txt) or table.get(_i18n_norm(txt)) or txt
+
+
+def _tr_walk(obj, table):
+    if isinstance(obj, str):
+        return _tr_text(obj, table)
+    if isinstance(obj, list):
+        return [_tr_walk(x, table) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _tr_walk(v, table) for k, v in obj.items()}
+    return obj
+
+
+_ORIG_COMPUTE = Api.compute
+
+
+def _compute_i18n(self, raw):
+    # 兼容历史缓存：已废弃的计价货币选项回落到默认，避免整次计算报错
+    try:
+        from res_schema import CHOICES as _CH
+        _raw = dict(raw or {})
+        for _k, _default in (("display_ccy", "人民币 CNY"),):
+            _v = str(_raw.get(_k) or "")
+            if _v and _v not in _CH.get(_k, ({}, {}))[1]:
+                _raw[_k] = _default
+        raw = _raw
+    except Exception:
+        pass
+    payload = _ORIG_COMPUTE(self, raw)
+    # 表格内容不再在服务端预翻译：保留中文源串，由前端按「主/副语言」各自查表渲染，
+    # 否则副语言拿不到中文键，会退化成英文（历史上表格内部翻译不生效的根因）。
+    return payload
+    try:
+        lang = str((raw or {}).get('ui_lang') or '')
+        if lang and not lang.startswith('中文') and isinstance(payload, dict):
+            # 只翻译表格内容；卡片/页签保留中文源串，交给前端按主/副语言各自查表
+            tb = _i18n_table(lang)
+            lang2 = str((raw or {}).get("ui_lang2") or "")
+            tb2 = _i18n_table(lang2) if lang2 and not lang2.startswith(("中文", "无")) else {}
+            # 术语表「中文」列先做双语对照（用未翻译的中文源串）
+            gt = (payload.get("tables") or {}).get("术语表")
+            if isinstance(gt, dict) and isinstance(gt.get("rows"), list):
+                n1 = _lang_label(lang); n2 = _lang_label(lang2) if tb2 else ""
+                cols = gt.get("cols") or []
+                if len(cols) >= 3:
+                    cols[2] = f"{n1} / {n2}" if n2 else n1
+                if len(cols) >= 4:
+                    cols[3] = f"{n1} / {n2}" if n2 else n1
+                def _dual(txt, tb, tb2, n1, n2):
+                    a1 = tb.get(txt) or tb.get(_i18n_norm(txt)) or txt
+                    a2 = (tb2.get(txt) or tb2.get(_i18n_norm(txt)) or "") if tb2 else ""
+                    return a1 + ("\n" + a2 if a2 and a2 != a1 else "")
+                for row in gt["rows"]:
+                    if isinstance(row, list):
+                        if len(row) >= 3:
+                            row[2] = _dual(row[2], tb, tb2, n1, n2)
+                        if len(row) >= 4:
+                            row[3] = _dual(row[3], tb, tb2, n1, n2)
+            for key in ("tables", "glossary", "terms", "abbr", "sensitivity", "explain", "notes", "sens"):
+                if payload.get(key):
+                    payload[key] = _tr_walk(payload[key], tb)
+    except Exception:
+        pass
+    return payload
+
+
+Api.compute = _compute_i18n
+
 def selftest():
     api = Api(res_license.Client(enabled=False))
     api.live = res_wacc.live_data(force=False)     # 只读快照/兜底，不联网

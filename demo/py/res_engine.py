@@ -40,9 +40,9 @@ SOURCE_PARAMS = dict(
     om_cost_mode=0,          # 0 自下而上（默认） 1 投资额×比例（定额）
     om_cost_pct=0.012,       # 投资额比例法的年运维费率
     storage_rev_on=1,        # 1 储能计上网收入（并扣减电站小时） 0 不计
-    # 全投资现金流的初始投入恒为「建设投资 + 无形及递延资产」，**不含建设期利息**：
-    # 按《建设项目经济评价方法与参数》，建设期利息属融资成本，仅在项目资本金现金流
-    # 与融资方案中体现，不进项目投资现金流量表。
+    # 全投资现金流的初始投入＝「建设投资 + 无形及递延资产 + 建设期利息」（2026-10-26 业主定）：
+    # 建设期利息按资本化口径计入总投资，全投资现金流以总投资（除流动资金外）为初始流出，
+    # 使项目层面与会计口径（IDC 资本化进固定资产、随折旧摊销）保持一致。
     debt_base_mode=0,        # 0 债务基数=折旧基数（可抵押资产） 1 债务基数=项目总投资
     om_mode=1, cost_method=1, warranty_years=0,
     staff_per_50mw=1.3, avg_salary=15.62, benefits_ratio=0.6,
@@ -207,7 +207,7 @@ DEFAULTS = dict(
     debt_rate=0.07,
     debt_tenor=10,
     dsra_months=0.0,               # 委托方口径未设 DSRA（原 6 个月）
-    wc_loan_rate=0.0345,
+    wc_loan_rate=0.05,          # 与 Excel「流动资金贷款利率」(假设!N30) 一致
     wc_loan_ratio=0.7,             # 流动资金借款占比（短期循环贷，期末还本）
 
     # ── 税务 ─────────────────────────────────────────────────────────
@@ -234,6 +234,7 @@ DEFAULTS = dict(
     # wacc_ccy 决定取哪一币种的 10Y 无风险利率，所选币种的 WACC 即模型折现率
     beta_u=0.55, risk_free_rate=0.01679, erp=0.0423, crp=0.0841,
     wacc_rd=0.0995, country_def_spread=0.0552, credit_spread=0.0275,
+    wacc_dscr=1.836,           # 信用利差用 DSCR（与 Excel WACC 表 C48 一致，2026-10-26）
     risk_free_rate_usd=0.0524, risk_free_rate_cny=0.01679, risk_free_rate_local=0.16,
     wacc_country="Kyrgyzstan", wacc_sector="Green & Renewable Energy",
     wacc_ccy="CNY", rd_method=1,
@@ -348,7 +349,7 @@ def _derive_params(p, given=None):
     # 原实现只摊不投入 ⇒ 资产无资金来源，BS 恒差一个原值（默认 0 时不可见）。
     d("total_investment", lambda: p["fixed_asset_capex"] + p["idc"] + p["working_capital"]
                                + p["other_asset_base"])
-    # 全投资现金流初始投入：建设投资 + 无形及递延资产（不含建设期利息，见 DEFAULTS 注释）
+    # 全投资现金流初始投入：建设投资 + 无形及递延资产（建设期利息在 cf_project 中另加，见 DEFAULTS 注释）
     d("cf_initial_capex", lambda: p["fixed_asset_capex"] + p["other_asset_base"])
     d("debt_base_amt", lambda: p["total_investment"]
       if int(p.get("debt_base_mode", 0)) == 1 else p["dep_base"])
@@ -926,7 +927,8 @@ def compute(**overrides):
 
     cf_project = np.zeros(n)
     for i in range(t):
-        cf_project[i] = -p["cf_initial_capex"] / t
+        # 2026-10-26 业主定：建设期利息计入全投资现金流的投资流出（资本化口径）
+        cf_project[i] = -(p["cf_initial_capex"] + p["idc"]) / t
     # 增值税净流入 = 销项 − 应交 − 运营进项（净额口径，T-202610-006）
     _vat_net = vat_cash_net
     cf_project[t:] = (ebit[t:] - tax_unlev[t:] + dep[t:] + amort[t:]
@@ -1066,7 +1068,7 @@ def compute(**overrides):
     shield = (dep + amort)[t:] * ki
     pv_fixed = npv(d, fixed_opex)
     pv_shield = npv(d, shield)
-    pv_salv = salvage_value / (1 + d) ** ytot   # 折现至末个运营年（固定网格末端可能有空档年）
+    pv_salv = salvage_value / (1 + d) ** (p["oper_period"] - 1)   # 与 Excel 同口径：折现至末个运营年（首运营年指数 0）
     pv_gen = npv(d, gen[t:] / 1e4)          # 亿kWh
     lcoe = ((p["total_investment"] + pv_fixed - pv_shield - pv_salv) / pv_gen
             / 1e4) if pv_gen > 0 else float("nan")   # 万元/亿kWh → 元/kWh
@@ -1078,8 +1080,8 @@ def compute(**overrides):
         mirr_equity=mirr(cf_equity, _w, _w),
         equity_irr=irr(cf_equity),
         project_irr_pretax=irr(cf_project + tax_unlev),
-        project_npv=npv(d, cf_project, t0=1),
-        equity_npv=npv(d, cf_equity, t0=1),
+        project_npv=npv(d, cf_project, t0=0),   # 2026-10-26：统一从第 0 年折现
+        equity_npv=npv(d, cf_equity, t0=0),
         project_payback=payback(cf_project),
         equity_payback=payback(cf_equity),
         min_dscr=float(np.nanmin(dscr)),

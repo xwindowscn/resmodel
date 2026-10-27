@@ -32,13 +32,77 @@ def _i18n_table(code):
     return table
 
 
+_KEYS_SORTED = {}
+
+
+def _sorted_keys(code):
+    """词典键按长度倒序（用于含数字的动态句逐段匹配）。"""
+    if code not in _KEYS_SORTED:
+        t = _i18n_table(code)
+        _KEYS_SORTED[code] = sorted((k for k in t if 2 <= len(k) <= 14), key=len, reverse=True)
+    return _KEYS_SORTED[code]
+
+
+def _piecewise(code, s):
+    """整串查不到时：按「完整中文片段」译，片段本身在词典里才替换，避免拼出半中半外的混合词。"""
+    d = _i18n_table(code)
+    if not d:
+        return s
+    out, i = [], 0
+    for m in re.finditer(r"[一-鿿]+", s):
+        out.append(s[i:m.start()])
+        run = m.group(0)
+        out.append(d.get(run) or run)
+        i = m.end()
+    out.append(s[i:])
+    return "".join(out)
+
+
+def _piecewise_en(s):
+    """英文无整串译名时：按完整中文片段查 EN 表 / _EN_EXTRA。"""
+    out, i = [], 0
+    for m in re.finditer(r"[一-鿿]+", s):
+        out.append(s[i:m.start()])
+        run = m.group(0)
+        out.append(en(run) or _EN_EXTRA.get(run) or run)
+        i = m.end()
+    out.append(s[i:])
+    return "".join(out)
+
+
+_ENTITY = (("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&#39;", "'"))
+
+
+def _unesc(s):
+    """词典里残留的 HTML 实体（如 &amp;）在 Excel 里应还原为原字符。"""
+    for a, b in _ENTITY:
+        if a in s:
+            s = s.replace(a, b)
+    return s
+
+
 def _text_in(code, s):
-    """把中文串翻成指定语言代码；无译文回落英文、再回落中文。"""
+    """把中文串翻成指定语言代码；无译文回落英文、再回落中文；动态句按完整中文片段译。"""
+    out = _unesc(_text_in_raw(code, s))
+    if code not in ("", "zh", "zh-CN", "zh-TW") and isinstance(out, str):
+        out = out.replace("元/", "CNY/")      # 非中文：单价符号 元/W → CNY/W
+    return out
+
+
+def _text_in_raw(code, s):
     if code in ("", "zh", "zh-CN"):
         return s
-    if code == "en":
-        return en(s) or s
-    return _i18n_table(code).get(s) or en(s) or s
+    if code == "zh-TW":
+        return _i18n_table(code).get(s) or (_to_tw(s) if en(s) in (None, s) else en(s))
+    t = _i18n_table(code).get(s)
+    if t:
+        return t
+    e = en(s) or _EN_EXTRA.get(s)
+    if e and e != s:
+        return e
+    if any("一" <= c <= "鿿" for c in s):
+        return (_piecewise_en(s) if code == "en" else _piecewise(code, s)) or s
+    return s
 LANG_TAGS = {"bi": "中英对照", "en": "EN", "zh-CN": "简体", "zh-TW": "繁體"}
 
 SHEET_EN = {
@@ -188,6 +252,227 @@ _EN_EXTRA = {
         "Kyrgyz Republic 600MW Solar PV Project",
 }
 
+# 动态句中的中文片段（导出时逐段翻译用的英文对照）
+_EN_RUNS = {
+    '三币种共用': 'Shared across three currencies',
+    '不含税': 'Tax-exclusive',
+    '为当前口径': 'Current basis',
+    '交流': 'AC',
+    '信用利差加成': 'Credit spread add-on',
+    '债务成本': 'Cost of debt',
+    '储能动态投资造价': 'Energy storage dynamic investment cost',
+    '储能比例': 'Storage ratio',
+    '光伏发电项目': 'PV power generation project',
+    '其中': 'Of which',
+    '减项': 'Deduction',
+    '前期开发阶段': 'Early development stage',
+    '前沿': 'Frontier',
+    '单价按': 'Unit price based on',
+    '取各币种': 'For each currency',
+    '取数': 'Data extraction',
+    '合成评级法': 'Synthetic rating method',
+    '吉尔吉斯斯坦共和国': 'Kyrgyz Republic',
+    '含储能': 'Including storage',
+    '国债': 'Government bond',
+    '国别类别': 'Country category',
+    '国别风险溢价': 'Country risk premium',
+    '已作为模型折现率': 'Used as model discount rate',
+    '年期国债': 'Year government bond',
+    '年租金标准': 'Annual rent standard',
+    '建设期利息和业主管理费': "Interest during construction and owner's management fee",
+    '当收益率为': 'When yield is',
+    '总包工程部分': 'EPC portion',
+    '总投资为': 'Total investment is',
+    '所选币种': 'Selected currency',
+    '抓取': 'Extract',
+    '投资构成情况': 'Investment composition',
+    '折旧与摊销': 'Depreciation and amortization',
+    '折现': 'Discounting',
+    '折现基准': 'Discount basis',
+    '抵税': 'Tax shield',
+    '按第': 'Pursuant to Article',
+    '数据日期': 'Data date',
+    '无杠杆': 'Unlevered',
+    '本地快照': 'Local snapshot',
+    '权益占比': 'Equity ratio',
+    '权益成本': 'Cost of equity',
+    '杠杆': 'Leverage',
+    '残值': 'Residual value',
+    '测算总投资': 'Estimated total investment',
+    '电站动态投资造价': 'Power plant dynamic investment cost',
+    '直流容量': 'DC capacity',
+    '结余': 'Balance',
+    '股权风险溢价': 'Equity risk premium',
+    '运营第一年': 'First year of operation',
+    '造价': 'Cost',
+    '配置小时数': 'Configured hours',
+    '采用币种': 'Currency used',
+    '金额': 'Amount',
+    '项目测算情况': 'Project calculation',
+    '项结余反推': 'Back-calculate from item balance',
+    '首年利用小时': 'First-year utilization hours',
+}
+_EN_EXTRA.update(_EN_RUNS)
+
+# 英文补充译名（2026-10-26 第二批：列名、单位、动态句片段）
+_EN_RUNS_2 = {
+    '%（按发电收入）': '% (of generation revenue)',
+    'AC/直流容量（MW）容配比\nAC/DC capacity ratio': 'AC/DC capacity ratio (MW)',
+    'Average O&M Cost\nAvg O&amp;M Cost\n（元/kW）': 'Average O&M Cost\nAvg O&M Cost\n(CNY/kW)',
+    'DSCR 偿债备付率\n（min/avg）': 'DSCR (min/avg)',
+    'Depreciation and amortization × Income Tax Rate，折现（减项）\nDepreciation & amortization × tax rate, discounted (deduct)': 'Depreciation & amortization × tax rate, discounted (deduct)',
+    'Energy storage dynamic investment cost\nStorage Cost\n（元/Wh）': 'Energy storage dynamic investment cost\nStorage Cost\n(CNY/Wh)',
+    'English 英语 (en)': 'English (en)',
+    'Land Area\nLand\n（公顷 Hectare）': 'Land Area\nLand\n(hectare)',
+    'Of which：储能总投资（k）\nStorage Investment (k)': 'Of which: Storage Investment (k)',
+    'Of which：电站总投资（k）\nStation Investment (k)': 'Of which: Station Investment (k)',
+    'Power plant dynamic investment cost\nStation Cost\n（元/W）': 'Power plant dynamic investment cost\nStation Cost\n(CNY/W)',
+    'Unit：人民币 k · Unit price based on 元/W（储能 元/Wh）计\nUnit: k CNY · Prices in CNY/W (storage CNY/Wh)': 'Unit: k CNY · Prices in CNY/W (storage CNY/Wh)',
+    'WACC 三币种对比': 'WACC three-currency comparison',
+    'WACC 敏感度': 'WACC sensitivity',
+    'WACC 计算过程': 'WACC calculation process',
+    'k/人·yr': 'k/person·yr',
+    '业主管理费（含电站+储能）Owner mgmt fee (Station+Storage)': 'Owner mgmt fee (Station+Storage)',
+    '人民币 RMB（本模型）': 'RMB (this model)',
+    '亿kWh': '100 mn kWh',
+    '信用利差': 'Credit spread',
+    '储能等效小时 (k)': 'Storage equivalent hours (k)',
+    '储能系统和工程 Energy Storage Systems & Engineering': 'Energy Storage Systems & Engineering',
+    '全投资 IRR\nProject IRR': 'Project IRR',
+    '内容 Content': 'Content',
+    '单价 Price (元/W · 元/Wh)': 'Price (CNY/W · CNY/Wh)',
+    '口径': 'Basis',
+    '吉尔吉斯斯坦索姆 KGS（本国货币）': 'Kyrgyzstani som KGS (local currency)',
+    '国别违约利差': 'Country default spread',
+    '土地补偿（k/年）\nLand Compensation (k/yr)': 'Land Compensation (k/yr)',
+    '增值税净额 (k)': 'Net VAT (k)',
+    '备注 Note': 'Note',
+    '小计 Subtotal': 'Subtotal',
+    '小计 Subtotal — Total Investment Total Investment': 'Subtotal — Total Investment',
+    '引用左侧「Pre-development Cost」Parameters，如需修改请到参数列表 Referenced from the left-hand parameter list': 'Referenced from the left-hand parameter list (Pre-development Cost Parameters); edit in the parameter list if needed',
+    '成熟市场 ERP': 'Mature market ERP',
+    '所属行业': 'Industry',
+    '本模型未单列 Not modeled': 'Not modeled',
+    '汇流箱/箱变 Combiner Box / Transformer': 'Combiner Box / Transformer',
+    '电价（不含税）\nElectricity Price\n（元/kWh）': 'Electricity Price (excl. tax, RMB/kWh)',
+    '电站上网电量(万kWh) (k)': 'Plant On-grid Electricity (10,000 kWh) (k)',
+    '电站等效小时 (k)': 'Plant Equivalent Hours (k)',
+    '电芯更换投资 (k)': 'Battery Cell Replacement Investment (k)',
+    '编号': 'No.',
+    '美元 USD（对照）': 'USD (for reference)',
+    '融资费 Financing fee': 'Financing fee',
+    '行业无杠杆贝塔取数口径': 'Industry Unlevered Beta Basis',
+    '资本金 IRR\nEquity IRR': 'Equity IRR',
+    '金额（k）\nAmount (k)': 'Amount (k)',
+    '项目总投资（k）\nTotal Investment (k)': 'Total Investment (k)',
+    '与': 'and',
+    '人民币': 'RMB',
+    '元': 'RMB',
+    '列': 'Column',
+    '吉尔吉斯斯坦': 'Kyrgyzstan',
+    '档': 'Tier',
+    '行': 'Row',
+}
+_EN_EXTRA.update(_EN_RUNS_2)
+
+# 英文补充译名（第三批：片段、列名、术语表）
+_EN_RUNS_3 = {
+    'DSCR 的分子': 'DSCR numerator',
+    'EBIT ÷ 利息支出': 'EBIT ÷ interest expense',
+    'EBITDA − 折旧 − 摊销': 'EBITDA − depreciation − amortization',
+    'k/人·年': 'k/person-year',
+    '万': '10k',
+    '上网电量按 (1−线损率) 折算': 'Grid-connected electricity converted by (1 − line loss rate)',
+    '中文': 'Chinese',
+    '交流/直流容量（MW）容配比\nAC/DC capacity ratio': 'AC/DC capacity ratio (MW)',
+    '交流侧': 'AC side',
+    '人': 'person',
+    '人工、维修、材料、保险、土地等年度支出': 'Annual expenditures on labor, maintenance, materials, insurance, land, etc.',
+    '企业所得税': 'Corporate income tax',
+    '企业自由现金流': 'Free cash flow to firm (FCFF)',
+    '使项目净现值为零的折现率；全投资 IRR 不考虑融资结构': 'Discount rate that makes project NPV zero; all-investment IRR ignores financing structure',
+    '偿债准备金账户': 'Debt service reserve account (DSRA)',
+    '偿债备付率': 'Debt service coverage ratio (DSCR)',
+    '储能效率': 'Energy storage efficiency',
+    '储能每年的等效满充满放次数': 'Annual equivalent full charge/discharge cycles of energy storage',
+    '储能等效小时': 'Storage equivalent hours',
+    '充放电全过程效率': 'Round-trip efficiency',
+    '光伏组件在标准测试条件下的峰值功率，直流侧计量': 'PV module peak power under STC, measured on DC side',
+    '免税期': 'Tax holiday',
+    '全投资口径现金流（不扣融资）': 'All-investment cash flow (before financing)',
+    '全生命周期成本现值 ÷ 发电量现值，元/kWh': 'Present value of lifecycle costs ÷ present value of electricity generation, RMB/kWh',
+    '内部收益率': 'Internal rate of return (IRR)',
+    '净现值': 'Net Present Value (NPV)',
+    '利息保障倍数': 'Interest Coverage Ratio',
+    '加权平均资本成本': 'Weighted Average Cost of Capital (WACC)',
+    '千瓦峰 / 兆瓦峰': 'kWp / MWp',
+    '单位：人民币 k · 单价按 元/W（储能 元/Wh）计\nUnit: k CNY · Prices in CNY/W (storage CNY/Wh)': 'Unit: k CNY · Prices in CNY/W (storage CNY/Wh)',
+    '可用于偿债的现金流': 'Cash Flow Available for Debt Service (CFADS)',
+    '可用于还本付息的现金 ÷ 当期还本付息额': 'Cash available for debt service ÷ Current debt service',
+    '含自维/外委两种方式': 'Includes self-maintenance and outsourced maintenance',
+    '商业运行日': 'Commercial Operation Date (COD)',
+    '增值税': 'Value Added Tax (VAT)',
+    '增值税净额': 'Net VAT',
+    '如需修改请到参数列表': 'To modify, go to the parameter list',
+    '容配比': 'DC/AC ratio',
+    '小计': 'Subtotal',
+    '小计 Subtotal — 项目总投资 Total Investment': 'Subtotal — Total Investment',
+    '峰瓦': 'Watt-peak (Wp)',
+    '差价补贴': 'Price difference subsidy',
+    '平准化度电成本': 'Levelized Cost of Energy (LCOE)',
+    '年充放天数': 'Annual charge/discharge days',
+    '年衰减率': 'Annual degradation rate',
+    '并网点容量口径': 'Grid connection point capacity basis',
+    '建设投资': 'Construction investment',
+    '建设期借款利息，计入总投资': 'Interest during construction, included in total investment',
+    '建设期利息': 'Interest during construction',
+    '引用左侧': 'Reference left side',
+    '引用左侧「项目前期开发费」参数，如需修改请到参数列表 Referenced from the left-hand parameter list': "References the left-hand 'Project Pre-development Fee' parameter; to modify, go to the parameter list",
+    '息税前利润': 'EBIT',
+    '息税折旧摊销前利润': 'EBITDA',
+    '扣除还本付息后的股东现金流': 'Equity cash flow after debt service',
+    '按 WACC 折现的现金流现值之和；>0 表示超过基准回报': 'Sum of discounted cash flows at WACC; >0 indicates above benchmark return',
+    '按股东实际现金流出/流入计算的收益率': 'Return based on actual shareholder cash outflows/inflows',
+    '按还本付息额留存的储备金': 'Debt service reserve',
+    '期末固定资产余值折现': 'Discounted terminal fixed asset salvage value',
+    '期末固定资产余值折现（减项）\nTerminal salvage value, discounted (deduct)': 'Terminal salvage value, discounted (deduction)',
+    '本模型中电站与储能各自一个 EPC 总价': 'In this model, the power plant and energy storage each have one EPC lump-sum price',
+    '本模型按税率与免税年限计算': 'This model calculates based on tax rate and tax exemption period',
+    '本项目以投产年表示': 'This project is expressed by commissioning year',
+    '术语': 'Terminology',
+    '术语表': 'Glossary',
+    '术语表 Glossary': 'Glossary',
+    '瓦时 / 千瓦时 / 兆瓦时': 'Wh / kWh / MWh',
+    '电站 + 储能的 EPC 及管理费': 'EPC and management fees for power plant + energy storage',
+    '电站上网电量': 'Plant on-grid electricity',
+    '电站上网电量(万kWh)': 'Plant on-grid electricity (10,000 kWh)',
+    '电站等效小时': 'Plant equivalent full-load hours',
+    '电芯更换投资': 'Battery cell replacement investment',
+    '电量单位；储能容量与造价按 Wh 计': 'Energy unit; storage capacity and cost are based on Wh',
+    '直接免税 N 年，或三免三减半': 'Direct tax exemption for N years, or 3 years exempt + 3 years half-rate',
+    '直流侧': 'DC side',
+    '直流装机 ÷ 交流装机': 'DC capacity ÷ AC capacity',
+    '约定电价与电量的长期售电合同': 'Long-term power sales contract with agreed tariff and volume',
+    '线损率': 'Line loss rate',
+    '组件容量口径，本模型发电量按 DC 容量计': 'Module capacity basis; generation in this model is calculated based on DC capacity',
+    '组件效率逐年下降，本模型按首年折减 + 年衰减': 'Module efficiency declines annually; this model applies first-year derating + annual degradation',
+    '经营性现金的近似口径': 'Approximate operating cash flow basis',
+    '经营成本': 'Operating costs',
+    '缩写': 'Abbreviation',
+    '缩写 / 术语': 'Abbreviation / Term',
+    '股债加权折现率，本项目按 CAPM 合成': 'Weighted average cost of capital (WACC), derived via CAPM for this project',
+    '股权自由现金流': 'Free cash flow to equity (FCFE)',
+    '英文全称': 'Full English name',
+    '补贴年限内叠加的度电补贴': 'Per-kWh subsidy stacked within the subsidy period',
+    '计': 'Calculate',
+    '设计采购施工总承包': 'Engineering, procurement, and construction (EPC) turnkey contracting',
+    '购电协议': 'Power purchase agreement (PPA)',
+    '资本金 IRR': 'Equity IRR',
+    '运维': 'O&M',
+    '销项 − 进项 − 留抵 = 应交；EPC 含税、可抵扣': 'Output VAT − input VAT − carried-forward VAT credit = VAT payable; EPC is tax-inclusive and deductible',
+}
+_EN_EXTRA.update(_EN_RUNS_3)
+
 
 _UNIT_EN = {
     "年": "yrs",
@@ -302,8 +587,29 @@ def export_workbook(m, params, path, live=None, lang="bi", tables=None, langs=No
 
     tr = tr_pair if (lang == "pair" and langs) else _make_tr(lang, bi_cell)
 
-    # 英文/繁体版：货币值 ×10（1 万元 = 10 k），单位改用 k
-    conv = lang in ("en", "zh-TW") and not (lang == "pair")
+    # 「跟随界面语言」导出时的语言序列（副语言为「无」则只剩一个，即单语版）
+    pair_codes = [c for c in (langs or []) if c and c != "none"] if lang == "pair" else []
+    ZH_CODES = {"zh", "zh-CN", "zh-TW"}
+
+    def pair_unit(u):
+        """复合单位（万元/人·年、元/MWh·年）按语言逐个生成，再上下并排。"""
+        out = []
+        for c in (pair_codes or ["zh"]):
+            t = u
+            s = _text_in(c, t)
+            if s == t and ("/" in t or "·" in t):        # 整串查不到 → 分段译
+                head, sep, tail = t.partition("/")
+                segs = [head] + [x for x in re.split(r"·", tail) if x]
+                s = _text_in(c, segs[0])
+                if sep:
+                    s += "/" + "·".join(_text_in(c, x) for x in segs[1:])
+            if s and s not in out:
+                out.append(s)
+        return "\n".join(out) if out else u
+
+    # 非中文语言：货币值 ×10（1 万元 = 10 k），单位改用 k
+    conv = (lang in ("en", "zh-TW") and lang != "pair") or \
+           (lang == "pair" and bool(pair_codes) and pair_codes[0] not in ZH_CODES)
     mscale = 10.0 if conv else 1.0
     NON_MONEY_SRC = {
         "yr", "k", "dscr", "icr", "hours", "gen", "gen_guar", "gen_over",
@@ -371,9 +677,11 @@ def export_workbook(m, params, path, live=None, lang="bi", tables=None, langs=No
             if money_conv and isinstance(val, (int, float)):
                 val = val * 10.0
             if lang == "en":
-                unit_txt = _UNIT_EN.get(unit, unit)
+                unit_txt = _UNIT_EN.get(unit) or _text_in("en", unit)
             elif lang == "zh-TW":
                 unit_txt = _to_tw(unit.replace("万元", "k") if money_conv else unit)
+            elif lang == "pair":
+                unit_txt = pair_unit(unit.replace("万元", "k") if money_conv else unit)
             else:
                 unit_txt = unit
             if key in pct_keys:
@@ -389,10 +697,14 @@ def export_workbook(m, params, path, live=None, lang="bi", tables=None, langs=No
                 elif lang == "bi":
                     e = en(str(lab))
                     val = f"{lab} / {e}" if e else lab
+                elif lang == "pair":
+                    val = tr(str(lab), True)
                 else:
                     val = str(lab)
             elif lang == "en" and isinstance(val, str):
                 val = en(val) or _EN_EXTRA.get(val) or val
+            elif lang == "pair" and isinstance(val, str):
+                val = tr(val, True)
             ws.append([labels.get(key, key), val, unit_txt])
         ws.column_dimensions["A"].width = 36
         ws.column_dimensions["B"].width = 24
@@ -501,7 +813,7 @@ def export_workbook(m, params, path, live=None, lang="bi", tables=None, langs=No
             r = 4
             for row in spec.get("rows", []):
                 for j, val in enumerate(row, start=1):
-                    c2 = ws.cell(row=r, column=j, value=str(val))
+                    c2 = ws.cell(row=r, column=j, value=tr(str(val), True))
                     c2.alignment = Alignment(vertical="top", wrap_text=True)
                 r += 1
             from openpyxl.utils import get_column_letter

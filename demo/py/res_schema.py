@@ -163,6 +163,7 @@ GROUPS = [
         ("wacc_ccy", "WACC 采用币种", "choice", ""),
         ("rd_method", "Rd 确定方式", "choice", ""),
         ("wacc_rd", "投资人指定 Rd", "pct", "%"),
+        ("wacc_dscr", "信用利差用 DSCR（测算）", "float", "倍"),
     ]),
 ]
 
@@ -635,6 +636,7 @@ EN = {
     "三免三减半": "3+3 Holiday",
     # 指标卡
     "全投资 IRR（税后）": "Project IRR (after tax)",
+    "信用利差用 DSCR（测算）": "DSCR for Credit Spread",
     "全投资 MIRR": "Project MIRR",
     "资本金 MIRR": "Equity MIRR",
     "全投资 IRR（税前）": "Project IRR (before tax)",
@@ -675,6 +677,7 @@ EN = {
     "预扣税": "Withholding Tax", "可分配利润": "Distributable Profit",
     "建设投资": "Construction Investment",
     "建设投资（不含建设期利息）": "Construction Investment (excl. IDC)",
+    "建设投资（含建设期利息）": "Construction Investment (incl. IDC)",
     "建设期利息": "Interest During Construction",
     "无形及递延资产": "Intangibles & Deferred Assets",
     "地方提留": "Local Levy",
@@ -926,7 +929,8 @@ def en_list(items):
 
 # ── 年度报表 ──────────────────────────────────────────────────────────
 def _capex_invest(m, extra, i):
-    return -m["p"]["fixed_asset_capex"] / m["t"] if i < m["t"] else 0.0
+    # 2026-10-26：建设投资行含建设期利息（与全投资现金流口径一致）
+    return -(m["p"]["fixed_asset_capex"] + m["p"]["idc"]) / m["t"] if i < m["t"] else 0.0
 
 
 def _wc_invest(m, extra, i):
@@ -969,7 +973,7 @@ TABLE_SPECS = [
     ]),
     ("全部投资现金流", [
         ("yr", "项目年", 55, "int"), ("k", "运营年", 55, "op"),
-        ("_capex", "建设投资（不含建设期利息）", 130, "f1"),
+        ("_capex", "建设投资（含建设期利息）", 130, "f1"),
         ("_other_asset", "无形及递延资产", 110, "f1"),
         ("_wc", "流动资金", 90, "f1"),
         ("revenue", "营业收入", 95, "f1"),
@@ -1184,7 +1188,7 @@ CARD_DEFS = [
     ("project_npv", "全投资 NPV", "num0", "收益"),
     ("equity_npv", "资本金 NPV", "num0", "收益"),
     ("lcoe", "LCOE", "raw4", "收益"),
-    ("project_payback", "全投资回收期", "num1", "收益"),
+    ("project_payback", "全投资回收期", "num2", "收益"),
     ("min_dscr", "最小 DSCR", "num2", "偿债"),
     ("avg_dscr", "平均 DSCR", "num2", "偿债"),
     ("min_icr", "最低 ICR", "num2", "偿债"),
