@@ -510,7 +510,7 @@ button{font:inherit}
 .export-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .export-head h2{margin:0;font-size:19px;color:var(--navy)}
 .export-head h2 .en{font-size:11.5px;font-weight:400;color:#5d6b7a;margin-left:8px}
-.export-langs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:16px 0 14px}
+.export-langs{display:block;margin:16px 0 12px}
 .export-langs label{
   display:flex;align-items:center;gap:8px;border:1px solid var(--line);
   border-radius:9px;background:#fbfdff;padding:9px 11px;cursor:pointer;
@@ -526,6 +526,12 @@ button{font:inherit}
 }
 .export-all .en{display:block;font-size:10.5px;font-weight:400;opacity:.82;margin-top:2px}
 .export-arrow{font-size:16px;line-height:1}
+.export-langs{display:block;margin:16px 0 12px}
+.export-now{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;border:1px solid var(--line,#dce3ec);border-radius:10px;padding:10px 12px;background:#f7fafc}
+.export-now-k{font-size:12px;color:#5d6b7a;font-weight:600}
+.export-now-k .en{display:block;font-size:10.5px;color:#8b9db0;font-weight:400}
+.export-now-v{font-size:13.5px;font-weight:600;color:var(--navy,#16324f)}
+.export-now-tip{font-size:11px;color:#8b9db0;margin-left:auto}
 .export-hint{margin:10px 0 0;font-size:11px;color:#5d6b7a}
 .export-tables{
   display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px;
@@ -629,3 +635,8 @@ button{font:inherit}
 .term-sens{margin-top:18px}
 .term-sens .sens-table td:first-child{font-weight:600}
 .base-row{background:#eef5fb}
+
+/* 同格同行的主/副语言之间空两格 */
+/* 表格单元格内主/副语言：同行时空两格；换行时另起一行 */
+.table-wrap td .en { margin-left: 2em; }
+.table-wrap td .en.block { display: block; margin-left: 0; font-size: 9px; }

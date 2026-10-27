@@ -70,7 +70,7 @@ function boot() {
       if (last && last.ok && last.values) {
         const known = sc.defaults || {};
         const keep = {};
-        Object.entries(last.values).forEach(([k, v]) => { if (k in known) keep[k] = v; });
+        Object.entries(last.values).forEach(([k, v]) => { if (k in known || KEEP_ALWAYS.includes(k)) keep[k] = v; });
         startVals = { ...sc.defaults, ...keep };
       }
     } catch (e) { /* 读不到就用默认 */ }
@@ -79,10 +79,11 @@ function boot() {
     setValues(startVals);
     LicenseUI.init();
     buildProfileBar();
-    applyLang();
+    await applyLang();          // 先载入词典再出数，避免首屏用中文渲染
     refreshFx();
     setInterval(refreshFx, 10 * 60 * 1000);
-    compute();
+    watchUnits();
+    await compute();
     refreshWacc(false);                       // 先读快照/兜底，立即出数
     setTimeout(() => refreshWacc(true, true), 400);   // 再后台联网刷新
     setInterval(() => refreshWacc(true, true), 10 * 60 * 1000);   // 常驻：每 10 分钟联网取数
@@ -97,6 +98,9 @@ function boot() {
 
 // 有网络就实时取数；超过该时长未取数即在下次窗口激活/重算时补取
 const STALE_MS = 5 * 60 * 1000;
+// 不在参数表中但必须随记录一起恢复的键
+window.__APPJS_TAG = "v7-" + Date.now();
+const KEEP_ALWAYS = ["ui_lang", "ui_lang2", "display_ccy"];
 
 window.addEventListener("pywebviewready", boot);
 window.addEventListener("DOMContentLoaded", () => {
@@ -116,18 +120,35 @@ function enOf(s) {
 let I18N = {};
 let I18N2 = {};
 
+let I18N_N = null, I18N2_N = null;
+const _nk = (s) => String(s || "").replace(/\s+/g, "").replace(/[＝=]/g, "=").replace(/（/g, "(").replace(/）/g, ")");
+function _norm(table) {
+  const out = {};
+  for (const k in table) out[_nk(k)] = table[k];
+  return out;
+}
+
 function T(s) {
-  return (I18N && I18N[s]) || s;
+  if (!I18N) return s;
+  if (I18N[s]) return I18N[s];
+  if (!I18N_N) I18N_N = _norm(I18N);
+  return I18N_N[_nk(s)] || s;
 }
 
 function T2(s) {
-  return (I18N2 && I18N2[s]) || "";
+  if (!I18N2) return "";
+  if (I18N2[s]) return I18N2[s];
+  if (!I18N2_N) I18N2_N = _norm(I18N2);
+  return I18N2_N[_nk(s)] || "";
 }
 
 function codeOf(val, dflt) {
   const v = String(val || "").trim();
   if (!v) return dflt;
   if (v.includes("无")) return "none";
+  if (/日本|日本語/.test(v)) return "ja";
+  if (/Рус|俄语/.test(v)) return "ru";
+  if (/English|英语/.test(v)) return "en";
   const m = v.match(/\(([A-Za-z-]{2,5})\)$/);
   return m ? m[1] : dflt;
 }
@@ -141,8 +162,10 @@ async function applyLang() {
   try {
     const r1 = await api().i18n(c1);
     I18N = (r1 && r1.table) || {};
+    I18N_N = null;
     setStatus(`lang=${c1} · ${Object.keys(I18N).length} 条`);
   } catch (e) { I18N = {}; }
+  I18N2_N = null;
   try { I18N2 = (c2 === "none" || c2 === "zh") ? {} : ((await api().i18n(c2)).table || {}); }
   catch (e) { I18N2 = {}; }
   // 重建参数区与页签，让翻译生效
@@ -160,6 +183,11 @@ async function applyLang() {
       if (S.view === "scenario") runScenarios();
     }
   }
+  applyBiStatic(document);
+  try { applyUnitLocalization(document); } catch (e) {}
+  // 语言切换后重建页签，使其按新的主/副语言重新渲染
+  try { const _tb = $("tabs"); if (_tb) { _tb.innerHTML = ""; buildTabs(); } } catch (e) {}
+
 }
 
 function pickText(cn, en, which) {
@@ -176,6 +204,7 @@ function pickText(cn, en, which) {
 }
 
 function biHtml(cn, en) {
+  if (String(cn || "").includes("\n")) return dualCell(cn);   // 「中文\nEnglish」型单元格交给 dualCell
   const main = pickText(cn, en, "main");
   const sub = pickText(cn, en, "sub");
   return esc(main) + (sub && sub !== main ? `<span class="en">${esc(sub)}</span>` : "");
@@ -187,11 +216,77 @@ function hintHtml(cn, en) {
   return esc(main) + (sub && sub !== main ? `<span class="en">${esc(sub)}</span>` : "");
 }
 
+
+/* ── 统一翻译入口（可逆；仅处理静态外壳文本） ── */
+function translateStatic() {
+  const c1 = langCode();
+  const back = (c1 === "zh" || c1 === "zh-CN");
+  if (!back && (!I18N || !Object.keys(I18N).length)) return 0;
+  if (!back && !I18N_N) { I18N_N = {}; for (const k in I18N) I18N_N[_nk(k)] = I18N[k]; }
+  // 占位符（placeholder 不在文本节点里）
+  document.querySelectorAll("input[placeholder]").forEach((el) => {
+    if (el.__phOrig === undefined) el.__phOrig = el.placeholder;
+    const src = el.__phOrig;
+    if (back) { el.placeholder = src; return; }
+    const hm = src.match(/^[\u4e00-\u9fa5（）()：:、，,。·%\s]+?(?=[A-Za-z0-9])/);
+    const key = hm ? hm[0].trim() : src.trim();
+    const tr = I18N[key] || I18N_N[_nk(key)];
+    if (tr && tr !== key) el.placeholder = src.replace(key, tr);
+  });
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  let n = 0;
+  nodes.forEach((node) => {
+    const el = node.parentElement;
+    if (!el || el.closest("input,textarea,script,style")) return;
+    if (el.tagName === "OPTION") {
+      if (node.__orig === undefined) node.__orig = node.nodeValue;
+      const src0 = node.__orig;
+      if (back) { if (node.nodeValue !== src0) node.nodeValue = src0; return; }
+      const parts = src0.split(" / ");
+      if (parts.length >= 2) {
+        const k0 = parts[0].trim();
+        const m0 = I18N[k0] || I18N_N[_nk(k0)];
+        const s0 = (typeof T2 === "function") ? T2(k0) : "";
+        if (m0) { node.nodeValue = m0 + " / " + (s0 || parts[1].trim()); n++; return; }
+      }
+    }
+    if (el.closest(".metric-card, #table-wrap, .table-wrap")) return;   // 已由 biHtml / Python 处理
+    if (node.__orig === undefined) node.__orig = node.nodeValue;
+    const src = node.__orig;
+    if (back) { if (node.nodeValue !== src) { node.nodeValue = src; n++; } return; }
+    let txt = src.trim();
+    if (!txt) return;
+    let head = txt, tail = "";
+    const iN = txt.indexOf("\n");
+    if (iN > 0) { head = txt.slice(0, iN).trim(); tail = txt.slice(iN); }
+    else {
+      const m = txt.match(/^[\u4e00-\u9fa5（）()：:、，,。·%\s]+?(?=[A-Za-z0-9])/);
+      if (m && m[0].trim()) { head = m[0].trim(); tail = txt.slice(m[0].length); }
+    }
+    const tr = I18N[head] || I18N_N[_nk(head)];
+    if (!tr || tr === head) return;
+    let v = src.replace(head, tr);
+    // 副行：把英文尾巴换成第二语言译文
+    try {
+      const t2 = (typeof T2 === "function") ? T2(head) : "";
+      const tailTxt = (tail || "").trim();
+      if (t2 && tailTxt && tailTxt !== t2) v = v.replace(tailTxt, t2);
+    } catch (e) {}
+    if (node.nodeValue !== v) { node.nodeValue = v; n++; }
+  });
+  return n;
+}
+let _stTimer = null;
+new MutationObserver(() => { clearTimeout(_stTimer); _stTimer = setTimeout(translateStatic, 80); })
+  .observe(document.documentElement, { childList: true, subtree: true });
+
 function buildPresets() {
   const box = $("presets");
   S.schema.scenarios.forEach((name, i) => {
     const b = document.createElement("button");
-    b.innerHTML = biHtml(name, (S.schema.scenariosEn || [])[i] || "");
+    b.innerHTML = biHtml(name, T2(name) || (S.schema.scenariosEn || [])[i] || "");
     b.dataset.scenario = name;
     if (i === 0) b.classList.add("active");
     b.addEventListener("click", () => loadPreset(name));
@@ -220,7 +315,29 @@ function fillSelect(el, list) {
   list.forEach((o) => {
     const opt = document.createElement("option");
     opt.value = o.v;
-    opt.textContent = o.t + (o.t_en ? " / " + o.t_en : "");
+    let _m, _s2;
+    const mm = String(o.t || "").match(/^([\u4e00-\u9fff·]+)\s+([A-Z]{2,5})$/);
+    if (!o.name && mm) {              // 静态币种列表：中文名 + 代码
+      const nm2 = mm[1], code2 = mm[2];
+      const m1 = pickText(nm2, code2, "main");
+      const s3 = pickText(nm2, code2, "sub");
+      _m = `${m1} ${code2}`;
+      _s2 = s3 && s3 !== m1 ? s3 : "";
+      opt.textContent = _m + (_s2 ? " / " + _s2 : "");
+      el.appendChild(opt);
+      return;
+    }
+    if (o.name && o.code) {          // 币种下拉：名称随主/副语言，代码与利率保持
+      const nm = pickText(o.name, o.name_en || "", "main");
+      const ns = pickText(o.name, o.name_en || "", "sub");
+      const tail = ` ${o.code}（10Y ${Number(o.rate).toFixed(3)}%）`;
+      _m = nm + tail;
+      _s2 = ns && ns !== nm ? ns : "";
+    } else {
+      _m = pickText(o.t || "", o.t_en || "", "main");
+      _s2 = pickText(o.t || "", o.t_en || "", "sub");
+    }
+    opt.textContent = _m + (_s2 && _s2 !== _m ? " / " + _s2 : "");
     el.appendChild(opt);
   });
   if (list.some((o) => o.v === cur)) el.value = cur;
@@ -250,6 +367,103 @@ async function refreshFieldOptions(country) {
   } catch (e) {
     scheduleCompute();
   }
+}
+
+
+/* 单位串本地化：跟随主/副语言 + 计价货币
+   · 货币型单位（万元…、元/…）拆成「货币 + 后缀」，货币取币种代码，后缀按语言翻译
+   · 其他单位（年、月、天、公顷…）整体按词典翻译 */
+const CUR_CN = { CNY: "人民币", USD: "美元", JPY: "日元", RUB: "卢布", EUR: "欧元", KZT: "坚戈",
+  KGS: "索姆", UZS: "苏姆", TJS: "索莫尼", THB: "泰铢", IDR: "印尼盾", VND: "越南盾",
+  KHR: "瑞尔", MMK: "缅元", LAK: "基普", AED: "迪拉姆", TWD: "新台币" };
+function curLabel(code, which) {
+  if (code === "CNY") return "元";          // 人民币沿用「万元 / 元/kWh」
+  const lc = which === "main" ? langCode() : langCode2();
+  if (lc === "zh" || lc === "zh-TW") return CUR_CN[code] || code;   // 中文用币种中文名
+  return code;                                                     // 其他语言用币种代码（国际通用）
+}
+
+function _unitSuffix(sfx, which) {
+  if (!sfx) return "";
+  const tr = (x) => (which === "main" ? (T(x) || "") : (T2(x) || ""));
+  const whole = tr(sfx);
+  if (whole) return whole;
+  const lead = /^[\/·]/.test(sfx) ? sfx[0] : "";
+  const alt = lead ? sfx.slice(1) : sfx;
+  const altTr = tr(alt);
+  if (altTr) return lead + altTr;
+  // 「/年」「/MWh·年」这类：按分隔符逐段翻译，未命中的段保留原样
+  return sfx.split(/([\/·])/).map((seg) => {
+    if (!seg || seg === "/" || seg === "·") return seg;
+    if (!/[\u4e00-\u9fff]/.test(seg)) return seg;
+    return tr(seg) || seg;
+  }).join("");
+}
+/* 把已本地化过的单位串还原成中文源（万元、元/kWh），避免二次本地化失真 */
+function normalizeUnitSrc(u) {
+  let t = String(u || "");
+  const code = ccyCode();
+  const nm = CUR_CN[code] || "";
+  if (nm) t = t.replace(new RegExp("万" + nm, "g"), "万元").replace(new RegExp(nm, "g"), "元");
+  t = t.replace(new RegExp("万" + code, "g"), "万元").replace(new RegExp(code + "/", "g"), "元/");
+  return t;
+}
+
+function _sfx(sfx, which) {
+  if (!sfx) return "";
+  const pick = (x) => (which === "main" ? T(x) : T2(x)) || "";
+  return pick(sfx) || pick(sfx.replace(/^[\/·]+/, "")) && (sfx.match(/^[\/·]+/) ? sfx.match(/^[\/·]+/)[0] : "") + pick(sfx.replace(/^[\/·]+/, "")) || sfx;
+}
+function unitPair(cn, en) {
+  const map = (S.model && S.model.unitMap) || {};
+  if (cn && map[cn]) return { main: map[cn].main || cn, sub: map[cn].sub || "" };
+  const code = ccyCode();
+  const src = String(cn || "");
+  const enSrc = String(en || "");
+  let main = "", sub = "";
+  if (/^万元/.test(src)) {
+    const sfx = src.slice(2);
+    main = `万${curLabel(code, "main")}` + _sfx(sfx, "main");
+    sub = `万${curLabel(code, "sub")}` + _sfx(sfx, "sub");
+  } else if (/^元\//.test(src)) {
+    const sfx = src.slice(2);
+    main = `${curLabel(code, "main")}/${_sfx(sfx, "main")}`;
+    sub = `${curLabel(code, "sub")}/${_sfx(sfx, "sub")}`;
+  } else {
+    main = _sfx(src, "main");
+    sub = _sfx(src, "sub") || enSrc;
+  }
+  if (sub === main) sub = "";
+  return { main, sub };
+}
+function unitHtml(cn, en) {
+  const pr = unitPair(cn, en);
+  return esc(pr.main) + (pr.sub ? `<span class="en">${esc(pr.sub)}</span>` : "");
+}
+
+/* 后置本地化：所有单位元素按 data-src 与 unitMap 重绘（语言对 + 计价货币） */
+function applyUnitLocalization(root) {
+  const host = root || document;
+  host.querySelectorAll(".unit").forEach((el) => {
+    try {
+      if (!el.dataset.src) return;
+      const loc = unitPair(normalizeUnitSrc(el.dataset.src), el.dataset.srcen || "");
+      const html = esc(loc.main) + (loc.sub ? `<span class="en">${esc(loc.sub)}</span>` : "");
+      if (el.innerHTML !== html) el.innerHTML = html;
+    } catch (e) { /* 单个单位失败不影响其余 */ }
+  });
+  host.querySelectorAll(".field-sub .subitem i").forEach((i2) => {
+    try {
+      if (!i2.dataset.src) return;
+      const loc = unitPair(normalizeUnitSrc(i2.dataset.src), i2.dataset.srcen || "");
+      i2.innerHTML = esc(loc.main) + (loc.sub ? `<span class="en">${esc(loc.sub)}</span>` : "");
+    } catch (e) {}
+  });
+}
+
+function localizeUnit(cn, en) {          // 兼容旧调用
+  const pr = unitPair(cn, en);
+  return { cn: pr.main, en: pr.sub };
 }
 
 function buildGroups() {
@@ -301,7 +515,10 @@ function buildGroups() {
         el.addEventListener("change", () => {
           el.title = (el.selectedOptions[0] && el.selectedOptions[0].textContent) || "";
           S.values[f.key] = el.value;
-          if (f.key === "display_ccy") { setValues(S.values); updateFxHint(); }
+          if (f.key === "display_ccy") {
+            const host = $("groups"); if (host) { host.innerHTML = ""; S.inputs = {}; buildGroups(); }
+            updateFxHint(); applyLang();
+          }
           if (f.key === "ui_lang" || f.key === "ui_lang2") { applyLang(); }
           if (f.key === "scenario") loadPreset(el.value);
           else if (f.key === "wacc_country") refreshFieldOptions(el.value);
@@ -331,15 +548,24 @@ function buildGroups() {
           el.dataset.follow = el.value.trim() === "" ? "1" : "0";
         });
       }
+      if (isMoneyInput(f.key)) {
+        const r = ccyScale();
+        const raw = Number(String(S.values[f.key] ?? "").replace(/,/g, ""));
+        if (!isNaN(raw) && r && r !== 1) {
+          const shown = raw / r;
+          el.value = String(Number(shown.toFixed(6)));
+          el.dataset.disp = "1";
+        }
+      }
       S.inputs[f.key] = el;
 
       const unit = document.createElement("span");
       unit.className = "unit";
-      // 单位也做中英对照：中文一行、英文小字一行；带括号的长单位允许换行不再截断
-      const uCn = f.unit || "";
-      const uEn = (f.unit_en && f.unit_en !== uCn) ? f.unit_en : "";
-      unit.innerHTML = esc(uCn) + (uEn ? `<span class="en">${esc(uEn)}</span>` : "");
-      unit.title = [uCn, uEn].filter(Boolean).join(" / ");
+      unit.dataset.src = f.unit || "";              // 原始单位，供后置本地化反复使用
+      unit.dataset.srcen = f.unit_en || "";
+      const uLoc = unitPair(f.unit || "", f.unit_en || "");
+      unit.innerHTML = esc(uLoc.main) + (uLoc.sub ? `<span class="en">${esc(uLoc.sub)}</span>` : "");
+      unit.title = [f.unit || "", f.unit_en || ""].filter(Boolean).join(" / ");
 
       row.append(lab, el, unit);
       // 静态小字提示（如「实际发电小时」的填写口径）
@@ -412,10 +638,11 @@ function buildGroups() {
 
       const unit = document.createElement("span");
       unit.className = "unit";
-      const cCn = f.unit || "";
-      const cEn = (f.unit_en && f.unit_en !== cCn) ? f.unit_en : "";
-      unit.innerHTML = esc(cCn) + (cEn ? `<span class="en">${esc(cEn)}</span>` : "");
-      unit.title = [cCn, cEn].filter(Boolean).join(" / ");
+      unit.dataset.src = f.unit || "";
+      unit.dataset.srcen = f.unit_en || "";
+      const _dp = unitPair(f.unit || "", f.unit_en || "");
+      unit.innerHTML = esc(_dp.main) + (_dp.sub ? `<span class="en">${esc(_dp.sub)}</span>` : "");
+      unit.title = [f.unit || "", f.unit_en || ""].filter(Boolean).join(" / ");
 
       row.append(lab, val, unit);
       if (f.hint || f.hint_en) {
@@ -577,7 +804,10 @@ function buildProfileBar() {
     const r = await api().load_profile(pid);
     if (!r.ok) { toast(r.error || T("载入失败"), true); return; }
     S.decEdits = {};
-    setValues({ ...S.schema.defaults, ...filterValues(r.values) });
+    const keepLang = {};
+    KEEP_ALWAYS.forEach((k) => { if (r.values && r.values[k] !== undefined) keepLang[k] = r.values[k]; });
+    setValues({ ...S.schema.defaults, ...filterValues(r.values), ...keepLang });
+    applyLang();
     compute();
     setStatus(T("已载入记录") + "：" + r.name);
   };
@@ -704,10 +934,13 @@ async function compute() {
 function applyDisplayCurrency(res) {
   const c = (res && res.ccy) || null;
   const usd = !!c && c.code !== "CNY";
-  const cn = usd ? c.unit : "万元";
-  const enTxt = usd ? c.unit_en : "10K CNY";
+  const lc = langCode();
+  const useEn = lc !== "zh" && lc !== "zh-TW";          // 非中文界面用英文/代码写法
+  const cn = usd ? (useEn ? (c.unit_en || c.unit) : c.unit) : (useEn ? "10K CNY" : "万元");
+  const enTxt = usd ? (c.unit_en || c.unit) : "10K CNY";
   const prefix = usd ? c.prefix : "元";
   document.querySelectorAll(".unit").forEach((el) => {
+    if (el.dataset && el.dataset.src) return;           // 已由 unitMap 统一管理，勿覆盖
     const t = el.firstChild;
     if (t && t.nodeType === 3) {
       const txt = t.textContent.trim();
@@ -743,11 +976,11 @@ function render(res) {
 
 function renderMeta(s) {
   $("meta-line").innerHTML =
-    `<span class="chip">建设期 Construction <b>${s.construct}</b> 年 yrs</span>` +
-    `<span class="chip">运营期 Operation <b>${s.operate}</b> 年 yrs</span>` +
-    `<span class="chip">总投资 Investment <b>${fmt(s.investment, 0)}</b> 万元</span>` +
-    `<span class="chip">权益 Equity <b>${fmt(s.equity, 0)}</b> 万元</span>` +
-    `<span class="chip">债务 Debt <b>${fmt(s.debt, 0)}</b> 万元</span>` +
+    `<span class="chip">${biText("建设期", "Construction")} <b>${s.construct}</b> ${yearUnit()}</span>` +
+    `<span class="chip">${biText("运营期", "Operation")} <b>${s.operate}</b> ${yearUnit()}</span>` +
+    `<span class="chip">${biText("总投资", "Investment")} <b>${fmt(s.investment, 0)}</b> ${chipUnit()}</span>` +
+    `<span class="chip">${biText("权益", "Equity")} <b>${fmt(s.equity, 0)}</b> ${chipUnit()}</span>` +
+    `<span class="chip">${biText("债务", "Debt")} <b>${fmt(s.debt, 0)}</b> ${chipUnit()}</span>` +
     `<span class="chip">WACC <b>${(s.wacc * 100).toFixed(2)}%</b></span>`;
 }
 
@@ -758,6 +991,23 @@ function ccyCode() {
   const v = String(S.values.display_ccy || "CNY").trim();
   const m = v.match(/([A-Z]{3})$/);
   return m ? m[1] : (v || "CNY");
+}
+
+
+
+/* 概览小卡的单位：跟随计价货币（中文 ccy.unit / 英文 ccy.unit_en） */
+function yearUnit() {
+  const c = langCode();
+  if (c === "zh" || c === "zh-TW") return "年";
+  if (c === "en") return "yrs";
+  return T("年") || "年";
+}
+
+function chipUnit() {
+  const c = (S.model && S.model.ccy) || {};
+  const lc = langCode();
+  const useEn = lc !== "zh" && lc !== "zh-TW";   // 非中文界面用英文/代码写法
+  return esc((useEn ? (c.unit_en || c.unit) : (c.unit || c.unit_en)) || "万元");
 }
 
 function ccyScale() {
@@ -807,6 +1057,8 @@ function ccyIsUsd() {
   return String(S.values.display_ccy || "").toUpperCase().includes("USD");
 }
 
+
+
 function renderDerived(d) {
   if (!d) return;
   const storTariff = S.inputs["storage_elec_price"];
@@ -822,6 +1074,7 @@ function renderDerived(d) {
     const el = S.derived[k];
     if (el) el.textContent = d[k];
   });
+  try { applyUnitLocalization(document); } catch (e) {}
 }
 
 function renderCards(cards) {
@@ -954,7 +1207,7 @@ function renderDecisionTable(t) {
           inner = `<input type="text" class="dec-inp txt"` +
                   ` data-role="${role}" value="${esc(cell.value ?? "")}">`;
         } else if (cell.amount) {
-          inner = `<span class="dec-amt">${esc(cell.t)}</span>`;
+          inner = `<span class="dec-amt">${dualCell(cell.t)}</span>`;
         } else if (cell.bal) {
           inner = `<strong>= <span class="dec-bal" data-bal="${cell.bal}">` +
                   `${esc(cell.t)}</span></strong>`;
@@ -963,7 +1216,7 @@ function renderDecisionTable(t) {
                   `${esc(cell.t)}</span></strong>`;
         } else {
           const tag = cell.strong ? "strong" : "span";
-          inner = `<${tag}>${esc(cell.t)}</${tag}>`;
+          inner = `<${tag}>${dualCell(cell.t)}</${tag}>`;
         }
         return `<td${span}${align}>${inner}</td>`;
       }).join("") + "</tr>";
@@ -1077,6 +1330,9 @@ function onDecisionEdit(e) {
 function wireDecisionTable(t) {
   decisionCtx(t);
   const wrap = $("table-wrap");
+  watchBiGap();
+  watchUnits();
+  queueMicrotask(() => applyBiGap(wrap));
   if (wrap.dataset.decWired !== "1") {
     wrap.dataset.decWired = "1";
     wrap.addEventListener("input", onDecisionEdit);
@@ -1086,13 +1342,52 @@ function wireDecisionTable(t) {
   decRecalc();
 }
 
+
+/* 复合单元格：「中文\nEnglish」或「甲 + 乙」这类复合标签，按主/副语言逐段翻译 */
+function _trSeg(x, which) {
+  const t = which === "main" ? T(x) : T2(x);
+  return (t && t !== x) ? t : "";
+}
+function _joinSegs(zh, which, en) {
+  const segs = zh.split(/\s*([+＋\-−×÷=＝])\s*/).map((v) => v.trim()).filter(Boolean);
+  let ok = 0;
+  const out = segs.map((v) => {
+    if (!/[\u4e00-\u9fff]/.test(v)) return v;
+    const t = _trSeg(v, which);
+    if (t) { ok++; return t; }
+    return which === "main" ? v : "";
+  }).filter((v) => v !== "").join(" + ");
+  return { text: out, hit: ok, total: segs.filter((v) => /[\u4e00-\u9fff]/.test(v)).length };
+}
+function dualCell(v) {
+  const s0 = String(v ?? "");
+  if (!s0) return "";
+  const parts = s0.split("\n");
+  const zh = parts[0] || "";
+  const en = parts.length > 1 ? parts.slice(1).join("\n") : "";
+  if (!/[\u4e00-\u9fff]/.test(zh)) return esc(zh);          // 纯数值/编号
+  // 先尝试整串命中（公式句、带括号的长句），再退化为按运算符逐段翻译
+  const wholeM = _trSeg(zh, "main"), wholeS = _trSeg(zh, "sub");
+  if (wholeM) {
+    const mainW = wholeM;
+    let subW = wholeS || en;
+    if (subW === mainW) subW = "";
+    return esc(mainW) + (subW ? `<span class="en">${esc(subW)}</span>` : "");
+  }
+  const m = _joinSegs(zh, "main", en);
+  const s1 = _joinSegs(zh, "sub", en);
+  const main = m.hit ? m.text : (en || zh);
+  let sub = s1.hit ? s1.text : en;
+  if (sub === main) sub = "";
+  return esc(main) + (sub ? `<span class="en">${esc(sub)}</span>` : "");
+}
 function renderDefTable(t) {
   let html = tableHead(t.cols, t.cols_en);
   t.rows.forEach((row) => {
     const cls = row.cls ? ` class="${row.cls}"` : "";
     html += `<tr${cls}>` + row.cells.map((cell, i) => {
       const neg = i === 1 && /^-/.test(String(cell)) ? ' class="neg"' : "";
-      return `<td${neg}>${esc(cell)}</td>`;
+      return `<td${neg}>${dualCell(cell)}</td>`;
     }).join("") + "</tr>";
   });
   return html + "</tbody>";
@@ -1108,10 +1403,44 @@ function renderMatrixTable(t) {
     html += "<tr>" + row.cells.map((cell, i) => {
       const neg = i > 0 && /^-/.test(String(cell)) ? " neg" : "";
       const baseCls = i === base ? " base" : "";
-      return `<td class="${(neg + baseCls).trim()}">${esc(cell)}</td>`;
+      return `<td class="${(neg + baseCls).trim()}">${dualCell(cell)}</td>`;
     }).join("") + "</tr>";
   });
   return html + "</tbody>";
+}
+
+
+/* 同一单元格内主/副语言：同行时空两格；单元格多行时让副语言另起一行 */
+function applyBiGap(root) {
+  const host = root || document;
+  host.querySelectorAll("td .en, th .en").forEach((el) => {
+    const cell = el.closest("td, th");
+    if (!cell) return;
+    const cs = getComputedStyle(cell);
+    const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.4) || 16;
+    const multi = cell.getBoundingClientRect().height > lh * 1.45;
+    el.classList.toggle("block", multi);
+  });
+}
+
+let _unitObs = false;
+function watchUnits() {
+  if (_unitObs) return;
+  _unitObs = true;
+  let t = null;
+  new MutationObserver(() => {
+    clearTimeout(t);
+    t = setTimeout(() => { try { applyUnitLocalization(document); } catch (e) {} }, 150);
+  }).observe(document.body, { childList: true, subtree: true });
+}
+
+let _biGapObserved = false;
+function watchBiGap() {
+  if (_biGapObserved) return;
+  const wrap = $("table-wrap");
+  if (!wrap) return;
+  _biGapObserved = true;
+  new MutationObserver(() => applyBiGap(wrap)).observe(wrap, { childList: true, subtree: true });
 }
 
 function renderTable(name) {
@@ -1203,7 +1532,7 @@ function renderGlossary(t) {
     `<th>${biHtml(c, colsEn[i] || "")}</th>`).join("") + "</tr></thead><tbody>";
   (t.rows || []).forEach((r) => {
     html += "<tr>" + r.map((v, i) =>
-      `<td class="txt${i === 0 ? " term" : ""}">${esc(String(v))}</td>`).join("") + "</tr>";
+      `<td class="txt${i === 0 ? " term" : ""}">${dualCell(v)}</td>`).join("") + "</tr>";
   });
   wrap.innerHTML = `<table class="data-table gloss-table">${html}</tbody></table>`;
 }
@@ -1499,21 +1828,38 @@ function makeBarChart(host, opts) {
   host.appendChild(svg);
 }
 
+
+/* 图表标题、图例等静态双语节点：记录中文源，按主/副语言重绘 */
+function biText(cn, en) {
+  const main = pickText(cn, en, "main");
+  const sub = pickText(cn, en, "sub");
+  return esc(main) + (sub && sub !== main ? "  " + esc(sub) : "");
+}
+
+function applyBiStatic(root) {
+  (root || document).querySelectorAll(".panel-head h3, .legend span").forEach((el) => {
+    const enSpan = el.querySelector(".en");
+    if (!enSpan) return;
+    if (!el.dataset.cn) el.dataset.cn = el.textContent.replace(enSpan.textContent, "").trim();
+    el.innerHTML = biHtml(el.dataset.cn, enSpan.textContent);
+  });
+}
+
 function renderCharts(c) {
   makeChart($("chart-cum"), {
     labels: c.yr,
     shadeUntil: c.t,
     series: [
-      { name: "全投资 Project", color: "#27ae60", values: c.cum_p },
-      { name: "资本金 Equity", color: "#2980b9", values: c.cum_e, dashed: true, fill: false },
+      { name: biText("全投资", "Project"), color: "#27ae60", values: c.cum_p },
+      { name: biText("资本金", "Equity"), color: "#2980b9", values: c.cum_e, dashed: true, fill: false },
     ],
   });
   makeBarChart($("chart-flow"), {
     labels: c.yr,
     shadeUntil: c.t,
     series: [
-      { name: "营业收入 Revenue", color: "#27ae60", values: c.revenue },
-      { name: "经营成本 OpEx", color: "#e67e22", values: c.opex },
+      { name: biText("营业收入", "Revenue"), color: "#27ae60", values: c.revenue },
+      { name: biText("经营成本", "OpEx"), color: "#e67e22", values: c.opex },
     ],
   });
 }
@@ -1596,6 +1942,7 @@ const EXPORT_EN = {
   "资产负债表": "Balance Sheet", "总成本表": "Total Costs",
   "资金筹措": "Funding", "折旧表": "Depreciation", "摊销表": "Amortisation",
   "财务计划": "Financial Plan", "决策信息模版": "Decision Template",
+  "增值税计算表": "VAT Calculation", "术语表": "Glossary",
   "LCOE计算表": "LCOE Calculation", "WACC计算表": "WACC Calculation",
 };
 const EXPORT_LANG_NAME = {
@@ -1603,28 +1950,66 @@ const EXPORT_LANG_NAME = {
   "zh-CN": "简体中文 Simplified", "zh-TW": "繁體中文 Traditional",
 };
 
+// 导出语言＝界面语言：主语言 + 副语言；副语言为「无」时导出单语版
 function exportLang() {
-  const el = document.querySelector('input[name="export-lang"]:checked');
-  return el ? el.value : "bi";
+  return "pair";
+}
+
+function uiLangText(key) {
+  const sel = document.querySelector(`.field[data-key="${key}"] select`);
+  if (!sel) return "";
+  const o = sel.options[sel.selectedIndex];
+  return o ? String(o.textContent || "").trim() : "";
+}
+
+function isNoneLang(txt) {
+  return !txt || /^(无|なし|없음|無し)/.test(txt) || /none/i.test(txt);
 }
 
 function syncExportLang() {
-  document.querySelectorAll("#export-langs label").forEach((lab) => {
-    lab.classList.toggle("on", !!lab.querySelector("input:checked"));
-  });
+  const el = $("export-langnow");
+  if (!el) return;
+  const a = uiLangText("ui_lang");
+  const b = uiLangText("ui_lang2");
+  el.textContent = isNoneLang(b) ? a : `${a}  +  ${b}`;
 }
 
 function buildExportList() {
   const box = $("export-tables");
   if (!box || !S.schema) return;
   const names = ["参数", "核心指标"].concat(S.schema.tables.map((t) => t.name));
-  box.innerHTML = names.map((n) => (
-    `<button type="button" class="export-item" data-table="${n}">` +
-    `<strong>${EXPORT_EN[n] || n}</strong><span>${n}</span></button>`
-  )).join("");
+  box.innerHTML = names.map((n) => {
+    const en = EXPORT_EN[n] || n;
+    const sub = pickText(n, en, "sub") || "";
+    // tab 名恒为英文；副行随「副语言」显示（中文界面显示中文名）
+    const strong = langCode() === "zh" || langCode() === "zh-CN" || langCode() === "zh-TW" ? n : en;
+    const tail = sub && sub !== strong ? sub : "";
+    return `<button type="button" class="export-item" data-table="${n}">` +
+      `<strong>${esc(strong)}</strong>${tail ? `<span>${esc(tail)}</span>` : ""}</button>`;
+  }).join("");
+}
+
+// 导出弹窗里的固定文案：按主/副语言渲染
+function localizeExportDialog() {
+  const set = (sel, cn, en) => { const el = $(sel); if (el) el.innerHTML = biHtml(cn, en); };
+  set("export-title", "导出 Excel", "Export to Excel");
+  const btn = $("export-all");
+  if (btn) btn.innerHTML = `<span>${biHtml("下载全部表格", "All 16 tables · one file, one tab each")}</span>` +
+                           `<span class="export-arrow">↓</span>`;
+  set("export-close", "关闭", "Close");
+  const k = document.querySelector(".export-now-k");
+  if (k) k.innerHTML = biHtml("导出语言", "Export language");
+  const tip = document.querySelector(".export-now-tip");
+  if (tip) tip.innerHTML = biHtml("跟随界面主／副语言；副语言选「无」则导出单语版",
+                                  "Follows the primary/secondary UI languages; choose \u201CNone\u201D for a single-language file");
+  const hint = document.querySelector(".export-hint");
+  if (hint) hint.innerHTML = biHtml(
+    "每张表独立一个 tab；文件名与 tab 名统一为英文。导出内容与界面语言一致（主语言在上、副语言在下）；主语言为中文时货币用万元，其他语言按 k 显示（1 万元 = 10 k）。",
+    "One tab per table; file and tab names are always English. Content follows the UI languages (primary on top, secondary below); Chinese uses 10k CNY, other languages use k (1 unit of 10k = 10 k).");
 }
 
 function openExport() {
+  localizeExportDialog();
   buildExportList();
   syncExportLang();
   $("export-gate").classList.remove("hidden");
