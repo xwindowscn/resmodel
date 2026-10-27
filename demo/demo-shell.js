@@ -273,9 +273,10 @@
   }
 
   function usedSeconds() {
+    // 体验版只按「本机当天」计时：不并服务端的历史试用账本，
+    // 否则老设备的旧试用记录会让人一进来就直接进 16 项锁定态
     const local = endAt ? Math.max(0, Math.round((Date.now() - (endAt - TRIAL_MS)) / 1000)) : 0;
-    if (SERVER_USED === null) return local;
-    return Math.max(SERVER_USED, Math.min(local, SERVER_USED + 120)); // 离线时最多多算 2 分钟
+    return local;
   }
 
   function forceLock() {
