@@ -1,8 +1,8 @@
-/* T-202610-010 P2 · 体验版外壳：10 分钟全功能 → 16 项可调；导出全程关闭；语言不锁 */
+/* T-202610-010 P2 · 体验版外壳：20 分钟全功能 → 16 项可调；导出全程关闭；语言不锁 */
 (function () {
   "use strict";
 
-  const TRIAL_SECONDS = 600;          // 体验版 10 分钟
+  const TRIAL_SECONDS = 1200;         // 体验版 20 分钟（一次性，不做续期）
   const TRIAL_MS = TRIAL_SECONDS * 1000;
   const K_END = "resmodel_demo_end_v1";
   const K_SEEN = "resmodel_demo_locked_notice_v1";
@@ -55,7 +55,7 @@
     bar.id = "demo-bar";
     bar.innerHTML =
       '<span class="db-chip" id="db-chip">体验版 · 全功能剩余 <b id="db-time">--:--</b></span>' +
-      '<span class="db-note" id="db-note">10 分钟内可改全部参数，不可导出</span>' +
+      '<span class="db-note" id="db-note">20 分钟内可改全部参数，不可导出</span>' +
       '<button type="button" class="db-code" id="db-code-btn">机器码</button>' +
       '<a class="db-buy" href="https://resmodel.com/#pricing" target="_blank" rel="noopener">购买正式版 →</a>';
     document.body.appendChild(bar);
@@ -159,9 +159,9 @@
     const m = document.createElement("div");
     m.id = "demo-modal";
     m.innerHTML = `<div class="dm">
-      <h3>10 分钟全功能体验已结束</h3>
+      <h3>20 分钟全功能体验已结束</h3>
       <p>现在进入<b>体验模式</b>：仍可修改 <b>16 项</b>关键参数（装机、发电小时、电价、储能、EPC 单价、融资与汇率），其余参数锁定，全部报表继续实时重算。</p>
-      <p style="color:#6b8397;font-size:13px">The 10-minute full trial has ended. Sixteen key assumptions remain editable; everything else is locked and all statements keep recalculating live.</p>
+      <p style="color:#6b8397;font-size:13px">The 20-minute full trial has ended. Sixteen key assumptions remain editable; everything else is locked and all statements keep recalculating live.</p>
       <div class="acts">
         <button class="primary" id="dm-ok">继续体验</button>
         <a href="https://resmodel.com/#pricing" target="_blank" rel="noopener">查看正式版</a>
@@ -359,7 +359,7 @@
   function start() {
     endAt = loadEnd();
     locked = endAt <= Date.now() || usedSeconds() >= TRIAL_SECONDS;
-    // 体验版全程不可导出（业主要求：首次 10 分钟也不可导出）
+    // 体验版全程不可导出（业主要求：首次 20 分钟也不可导出）
     window.__EXPORT_BLOCKED__ = true;
     window.__EXPORT_BLOCKED_MSG__ = "体验版不可导出，正式版可导出 Excel";
     makeBar();
