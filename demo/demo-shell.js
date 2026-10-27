@@ -1,4 +1,4 @@
-/* T-202610-010 P2 · 体验版外壳：20 分钟全功能 → 16 项可调；导出全程关闭；语言不锁 */
+/* T-202610-010 P2 · 体验版外壳：每天 12 分钟全功能 → 16 项可调；导出全程关闭；语言不锁 */
 (function () {
   "use strict";
 
@@ -167,7 +167,7 @@
     const m = document.createElement("div");
     m.id = "demo-modal";
     m.innerHTML = `<div class="dm">
-      <h3>20 分钟全功能体验已结束</h3>
+      <h3>今天的 12 分钟全功能体验已结束</h3>
       <p>现在进入<b>体验模式</b>：仍可修改 <b>16 项</b>关键参数（装机、发电小时、电价、储能、EPC 单价、融资与汇率），其余参数锁定，全部报表继续实时重算。</p>
       <p style="color:#6b8397;font-size:13px">The 12-minute daily trial has ended. Sixteen key assumptions remain editable; everything else is locked and all statements keep recalculating live.</p>
       <div class="acts">
