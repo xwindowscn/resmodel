@@ -59,8 +59,8 @@ SOURCE_PARAMS = dict(
 
 DEFAULTS = dict(
     # ── 项目名称（报告/表头用）────────────────────────────────────────
-    project_name="吉尔吉斯斯坦共和国100MW光伏发电项目（含储能）",
-    project_name_en="Kyrgyzstan 100MW PV Project (with BESS)",
+    project_name="100MW光伏项目",
+    project_name_en="100MW Solar project",
     # ── 情形开关 ───────────────────────────────────────────────────────
     scenario="基准",
     gen_type="pv",                 # pv | wind        —— 发电类型
