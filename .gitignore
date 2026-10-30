@@ -1,0 +1,7 @@
+
+# 二进制不进仓库：安装包发布在 resmodel-downloads 的 release 附件里
+# 安装包不进仓库
+*.dmg
+*.exe
+*.pkg
+*.zip
